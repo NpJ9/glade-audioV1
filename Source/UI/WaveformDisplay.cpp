@@ -106,8 +106,8 @@ void WaveformDisplay::paint (juce::Graphics& g)
         g.setColour (accentColour.withAlpha (0.6f));
         g.strokePath (waveformPath, juce::PathStrokeType (1.f));
 
-        // ── Position marker ───────────────────────────────────────────────────
-        const float pos = (float) positionSlider.getValue();
+        // ── Position marker (uses LFO-modulated position when available) ─────
+        const float pos = (modPos >= 0.f) ? modPos : (float) positionSlider.getValue();
         const float markerX = pos * bounds.getWidth();
 
         // Jitter range shading (read jitter param directly)
@@ -125,14 +125,21 @@ void WaveformDisplay::paint (juce::Graphics& g)
         g.setColour (accentColour);
         g.fillEllipse (markerX - 5.f, bounds.getHeight() * 0.5f - 5.f, 10.f, 10.f);
 
-        // Root note label — bottom-right corner
+        // Root note label — bottom-right corner pill badge
         if (rootNoteName.isNotEmpty())
         {
-            g.setColour (accentColour.withAlpha (0.85f));
-            g.setFont (juce::Font (juce::FontOptions{}.withHeight (11.f).withStyle ("Bold")));
-            g.drawText (rootNoteName,
-                        getLocalBounds().reduced (5, 3),
-                        juce::Justification::bottomRight);
+            g.setFont (juce::Font (juce::FontOptions{}.withHeight (13.f).withStyle ("Bold")));
+            const int textW  = (int) g.getCurrentFont().getStringWidthFloat (rootNoteName) + 12;
+            const int textH  = 20;
+            const int bx     = getWidth()  - textW - 5;
+            const int by     = getHeight() - textH - 5;
+            juce::Rectangle<float> badge ((float) bx, (float) by, (float) textW, (float) textH);
+            g.setColour (GladeColors::background.withAlpha (0.75f));
+            g.fillRoundedRectangle (badge, 4.f);
+            g.setColour (accentColour);
+            g.drawRoundedRectangle (badge.reduced (0.5f), 4.f, 1.f);
+            g.setColour (accentColour);
+            g.drawText (rootNoteName, badge.toNearestInt(), juce::Justification::centred);
         }
     }
     else

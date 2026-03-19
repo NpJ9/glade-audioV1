@@ -10,6 +10,7 @@
 #include "UI/StepSequencerUI.h"
 
 class GladeAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                   public juce::DragAndDropContainer,
                                    private juce::Timer
 {
 public:
@@ -76,11 +77,16 @@ private:
     // WINDOW section
     GladeCombo windowCombo;
 
-    // LFO section
-    GladeKnob  lfoRateKnob, lfoDepthKnob;
-    GladeCombo lfoShapeCombo;
-    GladeCombo lfoTargetCombo;
+    // LFO section — 3 independent LFOs, selector switches which set is visible
+    GladeKnob  lfo1RateKnob, lfo1DepthKnob;
+    GladeCombo lfo1ShapeCombo, lfo1TargetCombo;
+    GladeKnob  lfo2RateKnob, lfo2DepthKnob;
+    GladeCombo lfo2ShapeCombo, lfo2TargetCombo;
+    GladeKnob  lfo3RateKnob, lfo3DepthKnob;
+    GladeCombo lfo3ShapeCombo, lfo3TargetCombo;
     LFODisplay lfoDisplay;
+    juce::TextButton lfoSelBtn[3];
+    int activeLfo = 0;   // 0/1/2
 
     // ENV FOLLOW section
     juce::ToggleButton envActiveButton { "ENV" };
@@ -101,6 +107,9 @@ private:
 
     void layoutKnobRow (juce::Rectangle<int> rowBounds,
                         std::initializer_list<GladeKnob*> knobs);
+
+    // Swap all 6 APVTS params between two FX slots
+    void swapFxSlots (int a, int b);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GladeAudioProcessorEditor)
 };

@@ -8,14 +8,16 @@ const FXSlotUI::EffectInfo& FXSlotUI::infoForType (int type)
 {
     static const EffectInfo table[] =
     {
-        { "NONE",     "-",      "-",      "-",      GladeColors::border  },
-        { "REVERB",   "Size",   "Damp",   "Width",  GladeColors::purple  },
-        { "DELAY",    "Time",   "Feedbk", "Spread", GladeColors::cyan    },
-        { "CHORUS",   "Rate",   "Depth",  "Feedbk", GladeColors::green   },
-        { "DISTORT",  "Drive",  "Tone",   "---",    GladeColors::magenta },
-        { "FILTER",   "Cutoff", "Res",    "Type",   GladeColors::yellow  },
+        { "NONE",     "-",      "-",       "-",       GladeColors::border  },
+        { "REVERB",   "Size",   "Damp",    "Width",   GladeColors::purple  },
+        { "DELAY",    "Time",   "Feedbk",  "Spread",  GladeColors::cyan    },
+        { "CHORUS",   "Rate",   "Depth",   "Feedbk",  GladeColors::green   },
+        { "DISTORT",  "Drive",  "Tone",    "---",     GladeColors::magenta },
+        { "FILTER",   "Cutoff", "Res",     "Type",    GladeColors::yellow  },
+        { "SHIMMER",  "Size",   "Damp",    "Shimmer", GladeColors::purple  },
+        { "L.CHORUS", "Rate",   "Depth",   "Feedbk",  GladeColors::green   },
     };
-    return table[juce::jlimit (0, 5, type)];
+    return table[juce::jlimit (0, 7, type)];
 }
 
 //==============================================================================
@@ -23,6 +25,10 @@ FXSlotUI::FXSlotUI (int idx, juce::AudioProcessorValueTreeState& apvts_)
     : slotIndex (idx), apvts (apvts_)
 {
     const juce::String s (idx);
+
+    // ── Drag grip ────────────────────────────────────────────────────────────
+    dragGrip.ownerSlot = idx;
+    addAndMakeVisible (dragGrip);
 
     // ── Type combo ────────────────────────────────────────────────────────────
     if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("fxType" + s)))
@@ -122,10 +128,12 @@ void FXSlotUI::resized()
 {
     auto bounds = getLocalBounds().reduced (8, 5);
 
-    // ── Top row: type combo + bypass button ───────────────────────────────────
+    // ── Top row: drag grip + type combo + bypass button ───────────────────────
     auto topRow = bounds.removeFromTop (34);
     bypassButton.setBounds (topRow.removeFromRight (50));
     topRow.removeFromRight (5);
+    dragGrip.setBounds (topRow.removeFromLeft (18));
+    topRow.removeFromLeft (4);
     typeCombo.setBounds (topRow);
 
     bounds.removeFromTop (5); // gap
@@ -155,6 +163,15 @@ void FXSlotUI::paint (juce::Graphics& g)
     // ── Accent border (colour = effect type) ──────────────────────────────────
     g.setColour (currentType == 0 ? border : accentColour.withAlpha (0.5f));
     g.drawRoundedRectangle (bounds.reduced (2.5f), 4.f, 1.f);
+
+    // ── Drop-target highlight ─────────────────────────────────────────────────
+    if (isDragTarget)
+    {
+        g.setColour (GladeColors::cyan.withAlpha (0.18f));
+        g.fillRoundedRectangle (bounds.reduced (2.f), 4.f);
+        g.setColour (GladeColors::cyan.withAlpha (0.8f));
+        g.drawRoundedRectangle (bounds.reduced (2.5f), 4.f, 2.f);
+    }
 
     // ── Top accent line ───────────────────────────────────────────────────────
     if (currentType != 0)
@@ -219,4 +236,34 @@ void FXSlotUI::paint (juce::Graphics& g)
                         juce::Justification::centred);
         }
     }
+}
+
+//==============================================================================
+// DragAndDropTarget
+bool FXSlotUI::isInterestedInDragSource (const SourceDetails& details)
+{
+    return details.description.toString().startsWith ("fx-slot-");
+}
+
+void FXSlotUI::itemDragEnter (const SourceDetails& details)
+{
+    // Don't highlight when hovering over self
+    const int src = details.description.toString().substring (8).getIntValue();
+    isDragTarget = (src != slotIndex);
+    repaint();
+}
+
+void FXSlotUI::itemDragExit (const SourceDetails&)
+{
+    isDragTarget = false;
+    repaint();
+}
+
+void FXSlotUI::itemDropped (const SourceDetails& details)
+{
+    isDragTarget = false;
+    repaint();
+    const int src = details.description.toString().substring (8).getIntValue();
+    if (src != slotIndex && onSwap)
+        onSwap (src, slotIndex);
 }

@@ -27,11 +27,19 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
       outputGainKnob ("outputGain", "Gain",    yellow, p.apvts),
       dryWetKnob     ("dryWet",     "Dry/Wet", yellow, p.apvts),
 
-      windowCombo     ("windowType", "Window", cyan,    p.apvts),
-      lfoRateKnob     ("lfoRate",    "Rate",   magenta, p.apvts),
-      lfoDepthKnob    ("lfoDepth",   "Depth",  magenta, p.apvts),
-      lfoShapeCombo   ("lfoShape",   "Shape",  magenta, p.apvts),
-      lfoTargetCombo  ("lfoTarget",  "Target", magenta, p.apvts),
+      windowCombo       ("windowType",  "Window", cyan,    p.apvts),
+      lfo1RateKnob      ("lfoRate",    "Rate",   magenta, p.apvts),
+      lfo1DepthKnob     ("lfoDepth",   "Depth",  magenta, p.apvts),
+      lfo1ShapeCombo    ("lfoShape",   "Shape",  magenta, p.apvts),
+      lfo1TargetCombo   ("lfoTarget",  "Target", magenta, p.apvts),
+      lfo2RateKnob      ("lfoRate2",   "Rate",   magenta, p.apvts),
+      lfo2DepthKnob     ("lfoDepth2",  "Depth",  magenta, p.apvts),
+      lfo2ShapeCombo    ("lfoShape2",  "Shape",  magenta, p.apvts),
+      lfo2TargetCombo   ("lfoTarget2", "Target", magenta, p.apvts),
+      lfo3RateKnob      ("lfoRate3",   "Rate",   magenta, p.apvts),
+      lfo3DepthKnob     ("lfoDepth3",  "Depth",  magenta, p.apvts),
+      lfo3ShapeCombo    ("lfoShape3",  "Shape",  magenta, p.apvts),
+      lfo3TargetCombo   ("lfoTarget3", "Target", magenta, p.apvts),
 
       beatDivCombo    ("beatDivision", "Div",    cyan,  p.apvts),
 
@@ -80,8 +88,16 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     rndAllButton.onClick = [this] { randomiseAll (wildButton.getToggleState()); };
     addAndMakeVisible (rndAllButton);
 
+    // WILD — styled as a toggle button with clear on/off visual
     wildButton.setColour (juce::ToggleButton::tickColourId,         magenta);
     wildButton.setColour (juce::ToggleButton::tickDisabledColourId, textDim);
+    wildButton.onStateChange = [this]
+    {
+        const bool on = wildButton.getToggleState();
+        wildButton.setColour (juce::ToggleButton::tickColourId,
+                              on ? magenta : textDim);
+        repaint (headerArea);
+    };
     addAndMakeVisible (wildButton);
 
     // ── Fractal visualizer ────────────────────────────────────────────────────
@@ -160,11 +176,31 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     addAndMakeVisible (outputGainKnob);
     addAndMakeVisible (dryWetKnob);
     addAndMakeVisible (windowCombo);
-    addAndMakeVisible (lfoRateKnob);
-    addAndMakeVisible (lfoDepthKnob);
-    addAndMakeVisible (lfoShapeCombo);
-    addAndMakeVisible (lfoTargetCombo);
     addAndMakeVisible (lfoDisplay);
+    addAndMakeVisible (lfo1RateKnob);  addAndMakeVisible (lfo1DepthKnob);
+    addAndMakeVisible (lfo1ShapeCombo);addAndMakeVisible (lfo1TargetCombo);
+    addAndMakeVisible (lfo2RateKnob);  addAndMakeVisible (lfo2DepthKnob);
+    addAndMakeVisible (lfo2ShapeCombo);addAndMakeVisible (lfo2TargetCombo);
+    addAndMakeVisible (lfo3RateKnob);  addAndMakeVisible (lfo3DepthKnob);
+    addAndMakeVisible (lfo3ShapeCombo);addAndMakeVisible (lfo3TargetCombo);
+
+    // LFO selector buttons
+    for (int i = 0; i < 3; ++i)
+    {
+        lfoSelBtn[i].setButtonText (juce::String (i + 1));
+        lfoSelBtn[i].setColour (juce::TextButton::buttonColourId,  panelRaised);
+        lfoSelBtn[i].setColour (juce::TextButton::textColourOffId, textDim);
+        lfoSelBtn[i].setColour (juce::TextButton::buttonOnColourId, magenta.withAlpha (0.25f));
+        lfoSelBtn[i].setColour (juce::TextButton::textColourOnId,  magenta);
+        lfoSelBtn[i].setClickingTogglesState (false);
+        const int idx = i;
+        lfoSelBtn[i].onClick = [this, idx]
+        {
+            activeLfo = idx;
+            resized();  // re-layout to show/hide correct set
+        };
+        addAndMakeVisible (lfoSelBtn[i]);
+    }
 
     // ── ENV FOLLOW ────────────────────────────────────────────────────────────
     envActiveButton.setColour (juce::ToggleButton::tickColourId,         cyan);
@@ -182,6 +218,7 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     for (int i = 0; i < 4; ++i)
     {
         fxSlots[i] = std::make_unique<FXSlotUI> (i, p.apvts);
+        fxSlots[i]->onSwap = [this] (int a, int b) { swapFxSlots (a, b); };
         addAndMakeVisible (*fxSlots[i]);
     }
 
@@ -215,16 +252,33 @@ void GladeAudioProcessorEditor::timerCallback()
                               rmsLevel,
                               audioFreqHz);
 
-    // ── LFO visual feedback ───────────────────────────────────────────────────
-    const float lfoDepth  = getF ("lfoDepth");
-    const int   lfoTarget = (int) getF ("lfoTarget");
-    const int   lfoShape  = (int) getF ("lfoShape");
-    const float lfoPhase  = audioProcessor.granularEngine.getLfoPhase();
-    const float lfoOutput = audioProcessor.granularEngine.getLfoOutput();
+    // ── LFO visual feedback (active LFO only) ────────────────────────────────
+    const char* depthId  = activeLfo == 0 ? "lfoDepth"  : activeLfo == 1 ? "lfoDepth2"  : "lfoDepth3";
+    const char* shapeId  = activeLfo == 0 ? "lfoShape"  : activeLfo == 1 ? "lfoShape2"  : "lfoShape3";
+    const char* targetId = activeLfo == 0 ? "lfoTarget" : activeLfo == 1 ? "lfoTarget2" : "lfoTarget3";
+
+    const float lfoDepth = getF (depthId);
+    const int   lfoShape = (int) getF (shapeId);
+    juce::ignoreUnused (targetId);
+
+    const float lfoPhase = activeLfo == 0 ? audioProcessor.granularEngine.getLfoPhase()
+                         : activeLfo == 1 ? audioProcessor.granularEngine.getLfoPhase2()
+                                          : audioProcessor.granularEngine.getLfoPhase3();
 
     // Update LFO waveform display
     lfoDisplay.setLfoState (lfoShape, lfoPhase, lfoDepth);
     lfoDisplay.repaint();
+
+    // Collect all 3 LFO contributions for knob ring overlays
+    const float lfoOut1 = audioProcessor.granularEngine.getLfoOutput();
+    const float lfoOut2 = audioProcessor.granularEngine.getLfoOutput2();
+    const float lfoOut3 = audioProcessor.granularEngine.getLfoOutput3();
+    const float lfoDep1 = getF ("lfoDepth");
+    const float lfoDep2 = getF ("lfoDepth2");
+    const float lfoDep3 = getF ("lfoDepth3");
+    const int   lfoTgt1 = (int) getF ("lfoTarget");
+    const int   lfoTgt2 = (int) getF ("lfoTarget2");
+    const int   lfoTgt3 = (int) getF ("lfoTarget3");
 
     // Env follower state
     const bool  envActive    = getF ("envActive") > 0.5f;
@@ -246,11 +300,16 @@ void GladeAudioProcessorEditor::timerCallback()
     {
         if (modKnobs[i] == nullptr) continue;
 
-        const bool lfoActive = (i == lfoTarget && lfoDepth > 0.001f);
-        const bool envOn     = (i == envTarget  && envActive && envDepth > 0.001f);
+        // Aggregate contributions from all 3 LFOs targeting this knob
+        float combinedOut = 0.f, combinedDep = 0.f;
+        if (i == lfoTgt1 && lfoDep1 > 0.001f) { combinedOut += lfoOut1 * lfoDep1; combinedDep = juce::jmax (combinedDep, lfoDep1); }
+        if (i == lfoTgt2 && lfoDep2 > 0.001f) { combinedOut += lfoOut2 * lfoDep2; combinedDep = juce::jmax (combinedDep, lfoDep2); }
+        if (i == lfoTgt3 && lfoDep3 > 0.001f) { combinedOut += lfoOut3 * lfoDep3; combinedDep = juce::jmax (combinedDep, lfoDep3); }
+        if (combinedDep > 0.001f) combinedOut /= combinedDep;
 
-        modKnobs[i]->setLfoOverlay (lfoActive ? lfoOutput : 0.f, lfoActive ? lfoDepth : 0.f);
-        modKnobs[i]->setEnvOverlay (envOn     ? envValue  : 0.f, envOn     ? envDepth : 0.f);
+        const bool envOn = (i == envTarget && envActive && envDepth > 0.001f);
+        modKnobs[i]->setLfoOverlay (combinedDep > 0.001f ? combinedOut : 0.f, combinedDep);
+        modKnobs[i]->setEnvOverlay (envOn ? envValue : 0.f, envOn ? envDepth : 0.f);
         modKnobs[i]->repaint();
     }
 
@@ -267,10 +326,13 @@ void GladeAudioProcessorEditor::timerCallback()
             : -1);
     }
 
-    // Update root note label on waveform display
+    // Update root note label + LFO-modulated position on waveform display
     if (audioProcessor.granularEngine.isReady())
+    {
         waveformDisplay.setRootNote (
             PitchDetector::midiNoteToName (audioProcessor.granularEngine.getDetectedRootNote()));
+        waveformDisplay.setModulatedPosition (audioProcessor.granularEngine.getModulatedPosition());
+    }
 
     repaint (headerArea); // refresh grain count
 }
@@ -339,8 +401,10 @@ void GladeAudioProcessorEditor::randomiseAll (bool wild)
     setParamRandom (a, "decay",   0.001f, wild ? 10.f : 2.f,  rng);
     setParamRandom (a, "sustain", 0.2f,   1.f,                 rng);
     setParamRandom (a, "release", 0.05f,  wild ? 10.f : 3.f,  rng);
-    // LFO depth (keep target, randomise depth)
-    setParamRandom (a, "lfoDepth", 0.f,   wild ? 1.f : 0.5f,  rng);
+    // LFO depths (keep targets, randomise depths for all 3)
+    setParamRandom (a, "lfoDepth",  0.f, wild ? 1.f : 0.5f, rng);
+    setParamRandom (a, "lfoDepth2", 0.f, wild ? 1.f : 0.4f, rng);
+    setParamRandom (a, "lfoDepth3", 0.f, wild ? 1.f : 0.4f, rng);
 }
 
 //==============================================================================
@@ -440,15 +504,47 @@ void GladeAudioProcessorEditor::resized()
         const int envSectionW = 50 + 3 * la.getHeight() + 130 + 8;
         auto envSection = la.removeFromRight (juce::jmin (envSectionW, la.getWidth() / 2));
 
-        // LFO layout: [display (70px tall narrow)] [Rate knob] [Depth knob] [Target combo] [Shape combo]
+        // LFO selector buttons [1][2][3] stacked vertically, then display, then knobs
+        auto selCol = la.removeFromLeft (22);
+        const int btnH = selCol.getHeight() / 3;
+        for (int i = 0; i < 3; ++i)
+        {
+            lfoSelBtn[i].setBounds (selCol.removeFromTop (btnH).reduced (0, 2));
+            // Highlight active
+            const bool active = (i == activeLfo);
+            lfoSelBtn[i].setColour (juce::TextButton::buttonColourId,
+                active ? magenta.withAlpha (0.22f) : panelRaised);
+            lfoSelBtn[i].setColour (juce::TextButton::textColourOffId,
+                active ? magenta : textDim);
+        }
+        la.removeFromLeft (4);
+
+        // LFO display
         lfoDisplay.setBounds (la.removeFromLeft (70).reduced (0, 4));
         la.removeFromLeft (6);
 
+        // Knob/combo layout — show only active LFO set
+        GladeKnob*  rateK  = nullptr;  GladeKnob*  depthK = nullptr;
+        GladeCombo* shapeC = nullptr;  GladeCombo* targetC = nullptr;
+        if (activeLfo == 0) { rateK=&lfo1RateKnob; depthK=&lfo1DepthKnob; shapeC=&lfo1ShapeCombo; targetC=&lfo1TargetCombo; }
+        if (activeLfo == 1) { rateK=&lfo2RateKnob; depthK=&lfo2DepthKnob; shapeC=&lfo2ShapeCombo; targetC=&lfo2TargetCombo; }
+        if (activeLfo == 2) { rateK=&lfo3RateKnob; depthK=&lfo3DepthKnob; shapeC=&lfo3ShapeCombo; targetC=&lfo3TargetCombo; }
+
+        // Hide all, then show active
+        for (auto* c : { &lfo1RateKnob, &lfo1DepthKnob, &lfo2RateKnob, &lfo2DepthKnob,
+                          &lfo3RateKnob, &lfo3DepthKnob }) c->setVisible (false);
+        for (auto* c : { &lfo1ShapeCombo, &lfo1TargetCombo, &lfo2ShapeCombo, &lfo2TargetCombo,
+                          &lfo3ShapeCombo, &lfo3TargetCombo }) c->setVisible (false);
+
         auto comboCol  = la.removeFromRight (173);
         auto comboLeft = comboCol.removeFromLeft (comboCol.getWidth() / 2 - 2);
-        lfoTargetCombo.setBounds (comboLeft.removeFromTop (69));
-        lfoShapeCombo.setBounds  (comboCol.reduced (4, 0).removeFromTop (69));
-        layoutKnobRow (la, { &lfoRateKnob, &lfoDepthKnob });
+        if (targetC) { targetC->setBounds (comboLeft.removeFromTop (69)); targetC->setVisible (true); }
+        if (shapeC)  { shapeC->setBounds  (comboCol.reduced (4, 0).removeFromTop (69)); shapeC->setVisible (true); }
+        if (rateK && depthK)
+        {
+            layoutKnobRow (la, { rateK, depthK });
+            rateK->setVisible (true);  depthK->setVisible (true);
+        }
 
         // ENV FOLLOW layout
         envSection.removeFromLeft (8);
@@ -520,6 +616,16 @@ void GladeAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText (juce::String (audioProcessor.granularEngine.getActiveGrainCount()) + " grains",
                 headerArea.reduced (8, 0).removeFromRight (100),
                 juce::Justification::centredRight);
+
+    // WILD active indicator — magenta glow behind the word
+    if (wildButton.getToggleState())
+    {
+        const auto wb = wildButton.getBoundsInParent().toFloat().expanded (3.f);
+        g.setColour (magenta.withAlpha (0.12f));
+        g.fillRoundedRectangle (wb, 4.f);
+        g.setColour (magenta.withAlpha (0.5f));
+        g.drawRoundedRectangle (wb.reduced (0.5f), 4.f, 1.f);
+    }
 }
 
 void GladeAudioProcessorEditor::paintSection (juce::Graphics& g,
@@ -542,6 +648,28 @@ void GladeAudioProcessorEditor::paintSection (juce::Graphics& g,
     g.fillRect (juce::Rectangle<float> ((float) bounds.getX() + 12.f,
                                          (float) bounds.getY() + 19.f,
                                          28.f, 1.5f));
+}
+
+//==============================================================================
+void GladeAudioProcessorEditor::swapFxSlots (int a, int b)
+{
+    if (a == b || a < 0 || b < 0 || a >= 4 || b >= 4) return;
+
+    auto swapParam = [&] (const char* prefix)
+    {
+        const juce::String idA = juce::String (prefix) + juce::String (a);
+        const juce::String idB = juce::String (prefix) + juce::String (b);
+        auto* pa = audioProcessor.apvts.getParameter (idA);
+        auto* pb = audioProcessor.apvts.getParameter (idB);
+        if (!pa || !pb) return;
+        const float va = pa->getValue();
+        const float vb = pb->getValue();
+        pa->beginChangeGesture(); pa->setValueNotifyingHost (vb); pa->endChangeGesture();
+        pb->beginChangeGesture(); pb->setValueNotifyingHost (va); pb->endChangeGesture();
+    };
+
+    for (const char* name : { "fxType", "fxBypass", "fxP1", "fxP2", "fxP3", "fxMix" })
+        swapParam (name);
 }
 
 //==============================================================================

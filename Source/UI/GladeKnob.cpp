@@ -15,6 +15,14 @@ GladeKnob::GladeKnob (const juce::String& pid,
 
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         apvts, pid, slider);
+
+    // Double-click resets to parameter default
+    if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (pid)))
+    {
+        const double defaultVal = (double) param->getNormalisableRange()
+                                           .convertFrom0to1 (param->getDefaultValue());
+        slider.setDoubleClickReturnValue (true, defaultVal);
+    }
 }
 
 GladeKnob::~GladeKnob()

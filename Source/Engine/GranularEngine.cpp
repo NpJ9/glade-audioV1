@@ -86,32 +86,45 @@ void GranularEngine::process (juce::AudioBuffer<float>&           output,
         return apvts.getRawParameterValue (id)->load();
     };
 
-    // ── LFO ──────────────────────────────────────────────────────────────────
-    const float lfoRate    = getF ("lfoRate");
-    const float lfoDepth   = getF ("lfoDepth");
-    const int   lfoShape   = (int) getF ("lfoShape");
-    const int   lfoTarget  = (int) getF ("lfoTarget");
-    const float lfoRaw     = calcLFO (lfoRate, lfoShape, numSamples);
-    lfoPhaseAtomic.store  ((float) lfoPhase);
-    lfoOutputAtomic.store (lfoRaw);
-    const float lfoVal     = lfoRaw * lfoDepth;
+    // ── LFO 1/2/3 — compute and sum modulation onto shared targets ───────────
+    const float lfoRaw1 = calcLFO (getF ("lfoRate"),  (int) getF ("lfoShape"),  numSamples, lfoPhase,  lfoLastS_H);
+    const float lfoRaw2 = calcLFO (getF ("lfoRate2"), (int) getF ("lfoShape2"), numSamples, lfoPhase2, lfoLastS_H2);
+    const float lfoRaw3 = calcLFO (getF ("lfoRate3"), (int) getF ("lfoShape3"), numSamples, lfoPhase3, lfoLastS_H3);
 
-    // ── Grain parameters — apply LFO offset to target ─────────────────────────
+    lfoPhaseAtomic.store   ((float) lfoPhase);   lfoOutputAtomic.store  (lfoRaw1);
+    lfoPhase2Atomic.store  ((float) lfoPhase2);  lfoOutput2Atomic.store (lfoRaw2);
+    lfoPhase3Atomic.store  ((float) lfoPhase3);  lfoOutput3Atomic.store (lfoRaw3);
+
+    const float lfoVal1 = lfoRaw1 * getF ("lfoDepth");
+    const float lfoVal2 = lfoRaw2 * getF ("lfoDepth2");
+    const float lfoVal3 = lfoRaw3 * getF ("lfoDepth3");
+
+    const int lfoTarget1 = (int) getF ("lfoTarget");
+    const int lfoTarget2 = (int) getF ("lfoTarget2");
+    const int lfoTarget3 = (int) getF ("lfoTarget3");
+
+    // ── Grain parameters — apply LFO offsets to targets ──────────────────────
     float grainSizeMs  = getF ("grainSize");
     float density      = getF ("grainDensity");
     float position     = getF ("grainPosition");
     float pitchShift   = getF ("pitchShift");
     float panSpread    = getF ("panSpread");
 
-    switch (lfoTarget)
+    auto applyLFO = [&] (int target, float val)
     {
-        case 1: grainSizeMs = juce::jlimit (5.f,   500.f, grainSizeMs + lfoVal * 200.f); break;
-        case 2: density     = juce::jlimit (1.f,   200.f, density     + lfoVal * 80.f);  break;
-        case 3: position    = juce::jlimit (0.f,   1.f,   position    + lfoVal * 0.5f);  break;
-        case 4: pitchShift  = juce::jlimit (-24.f, 24.f,  pitchShift  + lfoVal * 12.f);  break;
-        case 5: panSpread   = juce::jlimit (0.f,   1.f,   panSpread   + lfoVal * 0.5f);  break;
-        default: break;
-    }
+        switch (target)
+        {
+            case 1: grainSizeMs = juce::jlimit (5.f,   500.f, grainSizeMs + val * 200.f); break;
+            case 2: density     = juce::jlimit (1.f,   200.f, density     + val * 80.f);  break;
+            case 3: position    = juce::jlimit (0.f,   1.f,   position    + val * 0.5f);  break;
+            case 4: pitchShift  = juce::jlimit (-24.f, 24.f,  pitchShift  + val * 12.f);  break;
+            case 5: panSpread   = juce::jlimit (0.f,   1.f,   panSpread   + val * 0.5f);  break;
+            default: break;
+        }
+    };
+    applyLFO (lfoTarget1, lfoVal1);
+    applyLFO (lfoTarget2, lfoVal2);
+    applyLFO (lfoTarget3, lfoVal3);
 
     // ── Env follower modulation ───────────────────────────────────────────────
     {
@@ -148,6 +161,9 @@ void GranularEngine::process (juce::AudioBuffer<float>&           output,
                 position = seqPos;
         }
     }
+
+    // ── Publish final modulated position for waveform display ─────────────────
+    modulatedPositionAtomic.store (position);
 
     // ── Beat sync ─────────────────────────────────────────────────────────────
     const bool beatSync = getF ("beatSync") > 0.5f;
@@ -219,10 +235,12 @@ void GranularEngine::process (juce::AudioBuffer<float>&           output,
 }
 
 //==============================================================================
-float GranularEngine::calcLFO (float rate, int shape, int numSamples) noexcept
+float GranularEngine::calcLFO (float rate, int shape, int numSamples,
+                                double& phase, float& lastSH) noexcept
 {
-    lfoPhase = std::fmod (lfoPhase + (double) rate * (double) numSamples / sampleRate, 1.0);
-    const float p = (float) lfoPhase;
+    const double advance = (double) rate * (double) numSamples / sampleRate;
+    phase = std::fmod (phase + advance, 1.0);
+    const float p = (float) phase;
 
     switch (shape)
     {
@@ -232,9 +250,9 @@ float GranularEngine::calcLFO (float rate, int shape, int numSamples) noexcept
         case 3: return p < 0.5f ? 1.f : -1.f;
         case 4:
         {
-            if (p < (float) ((double) rate * (double) numSamples / sampleRate))
-                lfoLastS_H = lfoRandom.nextFloat() * 2.f - 1.f;
-            return lfoLastS_H;
+            if (p < (float) advance)
+                lastSH = lfoRandom.nextFloat() * 2.f - 1.f;
+            return lastSH;
         }
         default: return 0.f;
     }

@@ -2,7 +2,8 @@
 #include <JuceHeader.h>
 
 //==============================================================================
-enum class FXType { None = 0, Reverb, Delay, Chorus, Distortion, Filter };
+enum class FXType { None = 0, Reverb, Delay, Chorus, Distortion, Filter,
+                    ShimmerReverb, LushChorus };
 
 struct FXSlotParams
 {
@@ -45,13 +46,28 @@ private:
     // Scratch buffer for dry signal / dry-wet mixing
     juce::AudioBuffer<float> dryBuffer;
 
+    // ── Shimmer Reverb DSP ────────────────────────────────────────────────────
+    juce::dsp::Reverb         shimReverb;
+    std::vector<float>        shimPitchBufL, shimPitchBufR;
+    int                       shimPitchWrite = 0;
+    float                     shimReadPos0   = 0.f;
+    float                     shimReadPos1   = 0.f;   // second crossfade head
+
+    // ── Lush Chorus DSP ───────────────────────────────────────────────────────
+    static constexpr int kLushVoices = 6;
+    std::vector<float>   lushBufL[kLushVoices], lushBufR[kLushVoices];
+    int                  lushWritePos[kLushVoices] = {};
+    float                lushLfoPhase[kLushVoices] = {};
+
     // ── Per-type process helpers ─────────────────────────────────────────────
     void reinitEffect (FXType type);
-    void processReverb     (juce::AudioBuffer<float>&, const FXSlotParams&);
-    void processDelay      (juce::AudioBuffer<float>&, const FXSlotParams&, double bpm);
-    void processChorus     (juce::AudioBuffer<float>&, const FXSlotParams&);
-    void processDistortion (juce::AudioBuffer<float>&, const FXSlotParams&);
-    void processFilter     (juce::AudioBuffer<float>&, const FXSlotParams&);
+    void processReverb        (juce::AudioBuffer<float>&, const FXSlotParams&);
+    void processDelay         (juce::AudioBuffer<float>&, const FXSlotParams&, double bpm);
+    void processChorus        (juce::AudioBuffer<float>&, const FXSlotParams&);
+    void processDistortion    (juce::AudioBuffer<float>&, const FXSlotParams&);
+    void processFilter        (juce::AudioBuffer<float>&, const FXSlotParams&);
+    void processShimmerReverb (juce::AudioBuffer<float>&, const FXSlotParams&);
+    void processLushChorus    (juce::AudioBuffer<float>&, const FXSlotParams&);
 
     FXProcessor (const FXProcessor&) = delete;
     FXProcessor& operator= (const FXProcessor&) = delete;

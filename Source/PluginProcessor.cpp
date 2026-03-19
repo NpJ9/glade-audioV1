@@ -87,6 +87,30 @@ GladeAudioProcessor::createParameterLayout()
         "lfoTarget",    "LFO Target",
         juce::StringArray{"None","Grain Size","Density","Position","Pitch Shift","Pan Spread"}, 0));
 
+    // ── LFO 2 ─────────────────────────────────────────────────────────────────
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "lfoRate2",     "LFO 2 Rate",    juce::NormalisableRange<float>(0.01f, 20.f, 0.01f, 0.4f), 1.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "lfoDepth2",    "LFO 2 Depth",   juce::NormalisableRange<float>(0.f, 1.f), 0.f));
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+        "lfoShape2",    "LFO 2 Shape",
+        juce::StringArray{"Sine","Triangle","Saw","Square","S&H"}, 0));
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+        "lfoTarget2",   "LFO 2 Target",
+        juce::StringArray{"None","Grain Size","Density","Position","Pitch Shift","Pan Spread"}, 0));
+
+    // ── LFO 3 ─────────────────────────────────────────────────────────────────
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "lfoRate3",     "LFO 3 Rate",    juce::NormalisableRange<float>(0.01f, 20.f, 0.01f, 0.4f), 1.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "lfoDepth3",    "LFO 3 Depth",   juce::NormalisableRange<float>(0.f, 1.f), 0.f));
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+        "lfoShape3",    "LFO 3 Shape",
+        juce::StringArray{"Sine","Triangle","Saw","Square","S&H"}, 0));
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+        "lfoTarget3",   "LFO 3 Target",
+        juce::StringArray{"None","Grain Size","Density","Position","Pitch Shift","Pan Spread"}, 0));
+
     // ── Step Sequencer ────────────────────────────────────────────────────────
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         "seqActive", "Seq Active", false));
@@ -109,7 +133,7 @@ GladeAudioProcessor::createParameterLayout()
         juce::StringArray{"None","Grain Size","Density","Position","Pitch Shift","Pan Spread"}, 0));
 
     // ── FX Chain slots (4 slots, each has type + 4 params + bypass) ──────────
-    juce::StringArray fxTypes {"None","Reverb","Delay","Chorus","Distortion","Filter"};
+    juce::StringArray fxTypes {"None","Reverb","Delay","Chorus","Distortion","Filter","Shimmer","L.Chorus"};
     for (int i = 0; i < 4; ++i)
     {
         auto s = juce::String(i);

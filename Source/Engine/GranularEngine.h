@@ -35,10 +35,17 @@ public:
     int  getDetectedRootNote()   const { return detectedRootNote.load(); }
 
     // LFO state for UI visualisation (safe to read from message thread)
-    float getLfoPhase()       const { return lfoPhaseAtomic.load();       }  // 0-1
-    float getLfoOutput()      const { return lfoOutputAtomic.load();      }  // -1 to 1 (raw, before depth)
-    float getEnvFollowValue() const { return envFollowValueAtomic.load(); }  // 0-1
+    float getLfoPhase()       const { return lfoPhaseAtomic.load();       }
+    float getLfoOutput()      const { return lfoOutputAtomic.load();      }
+    float getLfoPhase2()      const { return lfoPhase2Atomic.load();      }
+    float getLfoOutput2()     const { return lfoOutput2Atomic.load();     }
+    float getLfoPhase3()      const { return lfoPhase3Atomic.load();      }
+    float getLfoOutput3()     const { return lfoOutput3Atomic.load();     }
+    float getEnvFollowValue() const { return envFollowValueAtomic.load(); }
     int   getSeqCurrentStep() const { return stepSequencer.getCurrentStep(); }
+
+    // Final modulated grain position (after all LFO/env/seq modulation)
+    float getModulatedPosition() const { return modulatedPositionAtomic.load(); }
 
 private:
     double sampleRate  = 44100.0;
@@ -57,15 +64,20 @@ private:
     // ADSR envelope
     juce::ADSR adsr;
 
-    // LFO state
-    double lfoPhase   = 0.0;
-    float  lfoLastS_H = 0.f;
+    // LFO state (3 independent LFOs)
+    double lfoPhase    = 0.0,  lfoPhase2    = 0.0,  lfoPhase3    = 0.0;
+    float  lfoLastS_H  = 0.f,  lfoLastS_H2  = 0.f,  lfoLastS_H3  = 0.f;
     juce::Random lfoRandom;
 
     // Exported to UI thread via atomics
-    std::atomic<float> lfoPhaseAtomic       { 0.f };
-    std::atomic<float> lfoOutputAtomic      { 0.f };
-    std::atomic<float> envFollowValueAtomic { 0.f };
+    std::atomic<float> lfoPhaseAtomic           { 0.f };
+    std::atomic<float> lfoOutputAtomic          { 0.f };
+    std::atomic<float> lfoPhase2Atomic          { 0.f };
+    std::atomic<float> lfoOutput2Atomic         { 0.f };
+    std::atomic<float> lfoPhase3Atomic          { 0.f };
+    std::atomic<float> lfoOutput3Atomic         { 0.f };
+    std::atomic<float> envFollowValueAtomic     { 0.f };
+    std::atomic<float> modulatedPositionAtomic  { 0.5f };
 
     // Envelope follower
     EnvelopeFollower envFollower;
@@ -73,7 +85,8 @@ private:
     // Step sequencer
     StepSequencer stepSequencer;
 
-    float  calcLFO (float rate, int shape, int numSamples) noexcept;
+    float  calcLFO (float rate, int shape, int numSamples,
+                    double& phase, float& lastSH) noexcept;
 
     // Dry/wet scratch buffer
     juce::AudioBuffer<float> wetBuffer;

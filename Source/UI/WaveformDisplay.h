@@ -22,6 +22,10 @@ public:
     // Update the root note label shown in the bottom-right corner (e.g. "C4").
     void setRootNote (const juce::String& name)  { rootNoteName = name; repaint(); }
 
+    // Override the displayed position marker with the LFO-modulated value.
+    // Pass -1 to revert to the raw parameter value.
+    void setModulatedPosition (float pos)        { modPos = pos; repaint(); }
+
     // Switch to wavetable display mode (pass nullptr to clear).
     void setWavetableMode (bool on, const juce::AudioBuffer<float>* wavetable);
 
@@ -49,6 +53,7 @@ private:
     bool         hasWaveform  = false;
     bool         isDragOver   = false;
     juce::String rootNoteName;
+    float        modPos = -1.f;  // -1 = use raw param; 0-1 = LFO-modulated override
 
     juce::Colour accentColour { GladeColors::cyan };
     bool         wavetableMode = false;
