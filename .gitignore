@@ -1,0 +1,13 @@
+build/
+.vscode/
+.claude/
+*.user
+*.suo
+*.aps
+*.ncb
+*.sdf
+*.opensdf
+*.db
+*.opendb
+*.DS_Store
+Thumbs.db
