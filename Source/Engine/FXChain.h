@@ -123,6 +123,8 @@ private:
     double sampleRate = 44100.0;
     juce::dsp::Reverb shimReverb;
     std::vector<float> shimPitchBufL, shimPitchBufR;
+    // Dry signal save-buffer for manual wet/dry blend (decouples mix from feedback path)
+    std::vector<float> shimDryL, shimDryR;
     int   shimPitchWrite = 0;
     float shimReadPos0   = 0.f;
     float shimReadPos1   = 0.f;

@@ -307,6 +307,10 @@ void ShimmerEffect::prepare (double sr, int maxBlock)
     shimPitchWrite = 0;
     shimReadPos0   = 0.f;
     shimReadPos1   = (float) pitchBufSize * 0.5f;
+
+    // Dry save-buffer: pre-sized to avoid per-block allocation
+    shimDryL.assign ((size_t) maxBlock, 0.f);
+    shimDryR.assign ((size_t) maxBlock, 0.f);
 }
 
 void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
@@ -314,9 +318,27 @@ void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
 {
     const int   numSamples  = buffer.getNumSamples();
     const bool  hasStereo   = buffer.getNumChannels() > 1;
-    const float shimmerAmt  = params.p3 * 0.55f;
+    // Reduced cap (0.55 → 0.40): steady-state loop gain = shimmerAmt / (1 - shimmerAmt).
+    // At 0.40 this is 0.67×; at 0.55 it was 1.22× which amplified above unity.
+    const float shimmerAmt  = params.p3 * 0.40f;
+    const float mix         = params.mix;
     const int   pitchBufSz  = (int) shimPitchBufL.size();
     if (pitchBufSz < 4) return;
+
+    // Guard: non-conformant host may send a block larger than maxBlock
+    if (numSamples > (int) shimDryL.size())
+    {
+        shimDryL.assign ((size_t) numSamples, 0.f);
+        shimDryR.assign ((size_t) numSamples, 0.f);
+    }
+
+    // Step 0: save dry signal — the mix blend is done manually after reverb so
+    // that the mix knob is outside the feedback path and can't affect loop gain.
+    for (int s = 0; s < numSamples; ++s)
+    {
+        shimDryL[s] = buffer.getSample (0, s);
+        shimDryR[s] = hasStereo ? buffer.getSample (1, s) : shimDryL[s];
+    }
 
     // Step 1: add octave-up pitch-shifted shimmer from previous block
     for (int s = 0; s < numSamples; ++s)
@@ -346,13 +368,14 @@ void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
         shimReadPos1 = std::fmod (shimReadPos1 + 2.f, (float) pitchBufSz);
     }
 
-    // Step 2: process through reverb
+    // Step 2: reverb always at 100% wet internally — keeps the feedback loop
+    // independent of the mix knob (mix is applied manually in step 4).
     juce::dsp::Reverb::Parameters rp;
     rp.roomSize   = 0.65f + params.p1 * 0.35f;
     rp.damping    = params.p2;
     rp.width      = 1.0f;
-    rp.wetLevel   = params.mix;
-    rp.dryLevel   = 1.f - params.mix;
+    rp.wetLevel   = 1.0f;
+    rp.dryLevel   = 0.0f;
     rp.freezeMode = 0.f;
     shimReverb.setParameters (rp);
 
@@ -360,13 +383,22 @@ void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
     juce::dsp::ProcessContextReplacing<float> ctx   (block);
     shimReverb.process (ctx);
 
-    // Step 3: write reverb output to pitch buffer for next block
+    // Step 3: write reverb output to pitch buffer — hard-clamped to ±2 to
+    // prevent NaN/Inf from escaping into the feedback loop on very loud input.
     for (int s = 0; s < numSamples; ++s)
     {
-        shimPitchBufL[shimPitchWrite] = buffer.getSample (0, s);
-        shimPitchBufR[shimPitchWrite] = hasStereo ? buffer.getSample (1, s)
-                                                   : buffer.getSample (0, s);
+        shimPitchBufL[shimPitchWrite] = juce::jlimit (-2.f, 2.f, buffer.getSample (0, s));
+        shimPitchBufR[shimPitchWrite] = juce::jlimit (-2.f, 2.f,
+            hasStereo ? buffer.getSample (1, s) : buffer.getSample (0, s));
         shimPitchWrite = (shimPitchWrite + 1) % pitchBufSz;
+    }
+
+    // Step 4: manual dry/wet blend — mix knob is now outside the feedback path
+    for (int s = 0; s < numSamples; ++s)
+    {
+        buffer.setSample (0, s, shimDryL[s] * (1.f - mix) + buffer.getSample (0, s) * mix);
+        if (hasStereo)
+            buffer.setSample (1, s, shimDryR[s] * (1.f - mix) + buffer.getSample (1, s) * mix);
     }
 }
 
@@ -375,6 +407,8 @@ void ShimmerEffect::reset()
     shimReverb.reset();
     std::fill (shimPitchBufL.begin(), shimPitchBufL.end(), 0.f);
     std::fill (shimPitchBufR.begin(), shimPitchBufR.end(), 0.f);
+    std::fill (shimDryL.begin(), shimDryL.end(), 0.f);
+    std::fill (shimDryR.begin(), shimDryR.end(), 0.f);
     shimPitchWrite = 0;
     shimReadPos0   = 0.f;
     shimReadPos1   = (float) shimPitchBufL.size() * 0.5f;
