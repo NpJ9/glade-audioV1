@@ -20,7 +20,10 @@ public:
     void setSampleBuffer (const juce::AudioBuffer<float>& buffer);
 
     // Update the root note label shown in the bottom-right corner (e.g. "C4").
-    void setRootNote (const juce::String& name)  { rootNoteName = name; repaint(); }
+    void setRootNote (const juce::String& name)
+    {
+        if (name != rootNoteName) { rootNoteName = name; repaint(); }
+    }
 
     // Override the displayed position marker with the LFO-modulated value.
     // Pass -1 to revert to the raw parameter value.
@@ -49,7 +52,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> posAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> jitterAttachment;
 
-    juce::Path   waveformPath;
+    juce::Path          waveformPath;
+    std::vector<float>  waveformPeaks;   // downsampled peak data, rebuilt on resize
     bool         hasWaveform  = false;
     bool         isDragOver   = false;
     juce::String rootNoteName;
@@ -58,7 +62,10 @@ private:
     juce::Colour accentColour { GladeColors::cyan };
     bool         wavetableMode = false;
 
+    // Scans the buffer and stores per-pixel peak data into waveformPeaks.
     void buildWaveformPath (const juce::AudioBuffer<float>& buffer);
+    // Rebuilds waveformPath from cached waveformPeaks (no buffer access needed).
+    void rebuildPathFromPeaks();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformDisplay)
 };

@@ -52,6 +52,9 @@ public:
     // Pre-allocated dry buffer for dry/wet blending (no audio-thread alloc)
     juce::AudioBuffer<float> dryBuffer;
 
+    // Smoothed dry/wet — prevents zipper noise when dryWet is automated
+    juce::LinearSmoothedValue<float> dryWetSmoothed;
+
     GranularEngine             granularEngine;
     std::unique_ptr<FXChain>   fxChain;
     PresetManager              presetManager;

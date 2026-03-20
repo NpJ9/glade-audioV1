@@ -160,15 +160,26 @@ void GladeAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     granularEngine.prepare (sampleRate, samplesPerBlock);
     fxChain->prepare (sampleRate, samplesPerBlock);
     dryBuffer.setSize (2, samplesPerBlock);
+
+    dryWetSmoothed.reset (sampleRate, 0.05);
+    dryWetSmoothed.setCurrentAndTargetValue (apvts.getRawParameterValue ("dryWet")->load());
 }
 
-void GladeAudioProcessor::releaseResources() {}
+void GladeAudioProcessor::releaseResources()
+{
+    // Release DSP state and free large heap buffers (delay lines, grain buffers)
+    // so the memory is returned to the OS when the plugin is deactivated.
+    granularEngine.releaseResources();
+    fxChain->reset();
+
+    // Shrink dry buffer to zero — will be reallocated on next prepareToPlay
+    dryBuffer.setSize (0, 0);
+}
 
 //==============================================================================
 void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                         juce::MidiBuffer& midiMessages)
 {
-    juce::ignoreUnused (midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
     // ── Read host BPM ─────────────────────────────────────────────────────────
@@ -187,21 +198,31 @@ void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     outputRms.store (rmsSum / (float) juce::jmax (1, buffer.getNumChannels()));
 
     // ── Dry/wet: blend pre-FX (dry) and post-FX (wet) ────────────────────────
-    const float dryWet = apvts.getRawParameterValue ("dryWet")->load();
+    dryWetSmoothed.setTargetValue (apvts.getRawParameterValue ("dryWet")->load());
 
-    // save granular output before FX (no allocation — dryBuffer pre-sized in prepareToPlay)
-    const int numSamples = buffer.getNumSamples();
-    dryBuffer.setSize (buffer.getNumChannels(), numSamples, false, false, true);
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    // Save granular output before FX.
+    // prepareToPlay() pre-sizes dryBuffer so this path is allocation-free in
+    // normal operation.  The guard below only fires if a DAW sends a block
+    // larger than the size declared in prepareToPlay (non-conformant but real).
+    const int numSamples  = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+    if (numSamples > dryBuffer.getNumSamples() || numChannels > dryBuffer.getNumChannels())
+        dryBuffer.setSize (numChannels, numSamples, false, false, false);
+    for (int ch = 0; ch < numChannels; ++ch)
         dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 
     fxChain->process (buffer, apvts, currentBpm);  // buffer is now post-FX
 
-    // blend: output = dry*(1-dryWet) + postFX*dryWet
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    // Per-sample smoothed blend eliminates zipper noise when dryWet is automated.
+    // The smoother advances once per sample (outer loop) so each channel gets
+    // the same gain value at each sample position.
+    for (int s = 0; s < numSamples; ++s)
     {
-        buffer.applyGain (ch, 0, numSamples, dryWet);
-        buffer.addFrom   (ch, 0, dryBuffer, ch, 0, numSamples, 1.0f - dryWet);
+        const float w = dryWetSmoothed.getNextValue();
+        const float d = 1.f - w;
+        for (int ch = 0; ch < numChannels; ++ch)
+            buffer.setSample (ch, s,   buffer.getSample  (ch, s) * w
+                                     + dryBuffer.getSample (ch, s) * d);
     }
 }
 

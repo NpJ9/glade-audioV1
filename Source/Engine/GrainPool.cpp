@@ -59,13 +59,33 @@ void GrainPool::process (juce::AudioBuffer<float>& output,
             const float phase = (float) g.samplesPlayed / (float) g.grainLengthSamples;
             const float windowAmp = WindowFunction::get (g.windowType, phase);
 
-            // Linear interpolation into source
-            const int   idx0 = juce::jlimit (0, numSrcSamples - 1, (int) g.sourceReadPos);
-            const int   idx1 = juce::jlimit (0, numSrcSamples - 1, idx0 + 1);
-            const float frac = (float) (g.sourceReadPos - (double) idx0);
+            // 4-point Hermite cubic interpolation.
+            //
+            // Linear interpolation has significant gain above Nyquist/2, producing
+            // aliasing when pitchRatio > 1 (upward pitch shift).  Hermite cubic
+            // gives a much flatter passband and ~36 dB better stopband attenuation.
+            // Small overshots (<1%) at sharp transients are the trade-off.
+            //
+            // y(t) = ((c3*t + c2)*t + c1)*t + c0,  t in [0,1)
+            // using Catmull-Rom tension (0.5) for smooth yet accurate reconstruction.
+            const int   i1   = juce::jlimit (0, numSrcSamples - 1, (int) g.sourceReadPos);
+            const int   i0   = juce::jmax (0, i1 - 1);
+            const int   i2   = juce::jmin (numSrcSamples - 1, i1 + 1);
+            const int   i3   = juce::jmin (numSrcSamples - 1, i1 + 2);
+            const float t    = (float) (g.sourceReadPos - (double) i1);
 
-            const float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
-            const float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
+            auto hermite = [&] (const float* buf) -> float
+            {
+                const float y0 = buf[i0], y1 = buf[i1], y2 = buf[i2], y3 = buf[i3];
+                const float c0 = y1;
+                const float c1 = 0.5f * (y2 - y0);
+                const float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+                const float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+                return ((c3 * t + c2) * t + c1) * t + c0;
+            };
+
+            const float sL = hermite (srcL);
+            const float sR = hermite (srcR);
 
             const float gainL = windowAmp * g.amplitude * g.panL;
             const float gainR = windowAmp * g.amplitude * g.panR;

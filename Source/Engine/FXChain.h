@@ -46,6 +46,15 @@ private:
     // Scratch buffer for dry signal / dry-wet mixing
     juce::AudioBuffer<float> dryBuffer;
 
+    // ── 2× oversampler for Distortion waveshaper ────────────────────────────
+    juce::dsp::Oversampling<float> distortionOversampler {
+        2, 1, juce::dsp::Oversampling<float>::filterHaasHoldout_polyphaseIIR };
+
+    // ── DC-blocking filter for delay feedback path ───────────────────────────
+    static constexpr float kDCCoeff = 0.9998f;
+    float dcBlockInL = 0.f, dcBlockInR = 0.f;
+    float dcBlockOutL = 0.f, dcBlockOutR = 0.f;
+
     // ── Shimmer Reverb DSP ────────────────────────────────────────────────────
     juce::dsp::Reverb         shimReverb;
     std::vector<float>        shimPitchBufL, shimPitchBufR;

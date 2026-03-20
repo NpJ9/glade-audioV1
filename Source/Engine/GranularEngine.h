@@ -13,6 +13,7 @@ public:
     GranularEngine() = default;
 
     void prepare (double sampleRate, int maxBlockSize);
+    void releaseResources();   // frees large buffers; call from releaseResources()
 
     void process (juce::AudioBuffer<float>& output,
                   juce::MidiBuffer&         midi,
@@ -58,15 +59,22 @@ private:
     std::atomic<int>  currentMidiNote    { -1 };
     int               lastActiveMidiNote { 60 };
 
+    // Last-note-priority monophonic note stack.
+    // Populated and consumed only on the audio thread (inside handleMidi),
+    // so no synchronisation is needed.
+    static constexpr int kNoteStackSize = 16;
+    std::array<int, kNoteStackSize> noteStack {};
+    int noteStackSize = 0;
+
     // Detected root note (updated on load, used for pitch ratio)
     std::atomic<int>  detectedRootNote   { 60 };
 
     // ADSR envelope
     juce::ADSR adsr;
 
-    // LFO state (3 independent LFOs)
-    double lfoPhase    = 0.0,  lfoPhase2    = 0.0,  lfoPhase3    = 0.0;
-    float  lfoLastS_H  = 0.f,  lfoLastS_H2  = 0.f,  lfoLastS_H3  = 0.f;
+    // LFO state (3 independent LFOs).  lfoSH* = last sample-and-hold value.
+    double lfoPhase  = 0.0,  lfoPhase2  = 0.0,  lfoPhase3  = 0.0;
+    float  lfoSH1    = 0.f,  lfoSH2     = 0.f,  lfoSH3     = 0.f;
     juce::Random lfoRandom;
 
     // Exported to UI thread via atomics
@@ -90,6 +98,9 @@ private:
 
     // Dry/wet scratch buffer
     juce::AudioBuffer<float> wetBuffer;
+
+    // Smoothed output gain — prevents zipper noise on gain changes
+    juce::LinearSmoothedValue<float> outputGainSmoothed;
 
     void handleMidi (juce::MidiBuffer& midi);
     double midiNoteToPitchRatio (int note) const;

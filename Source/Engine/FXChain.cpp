@@ -45,6 +45,8 @@ void FXProcessor::prepare (double sr, int maxBlock)
     }
 
     dryBuffer.setSize (2, maxBlock);
+    distortionOversampler.initProcessing ((size_t) maxBlock);
+    dcBlockInL = dcBlockOutL = dcBlockInR = dcBlockOutR = 0.f;
     lastType = FXType::None;
 }
 
@@ -65,38 +67,62 @@ void FXProcessor::reset()
     }
     delayWritePos = 0;
     shimPitchWrite = 0;
+    distortionOversampler.reset();
+    dcBlockInL = dcBlockOutL = dcBlockInR = dcBlockOutR = 0.f;
     lastType = FXType::None;
 }
 
 void FXProcessor::reinitEffect (FXType type)
 {
     // Reset the relevant DSP object when type changes to clear stale state
-    if (type == FXType::Reverb)       reverb.reset();
-    if (type == FXType::Chorus)       chorus.reset();
-    if (type == FXType::Filter)       filter.reset();
-    if (type == FXType::ShimmerReverb)
+    switch (type)
     {
-        shimReverb.reset();
-        std::fill (shimPitchBufL.begin(), shimPitchBufL.end(), 0.f);
-        std::fill (shimPitchBufR.begin(), shimPitchBufR.end(), 0.f);
-        shimPitchWrite = 0;
-        shimReadPos0   = 0.f;
-        shimReadPos1   = (float) shimPitchBufL.size() * 0.5f;
-    }
-    if (type == FXType::LushChorus)
-    {
-        for (int v = 0; v < kLushVoices; ++v)
-        {
-            std::fill (lushBufL[v].begin(), lushBufL[v].end(), 0.f);
-            std::fill (lushBufR[v].begin(), lushBufR[v].end(), 0.f);
-            lushWritePos[v] = 0;
-        }
-    }
-    if (type == FXType::Delay)
-    {
-        std::fill (delayBufL.begin(), delayBufL.end(), 0.f);
-        std::fill (delayBufR.begin(), delayBufR.end(), 0.f);
-        delayWritePos = 0;
+        case FXType::Reverb:
+            reverb.reset();
+            break;
+
+        case FXType::Chorus:
+            chorus.reset();
+            break;
+
+        case FXType::Filter:
+            filter.reset();
+            break;
+
+        case FXType::Distortion:
+            // The distortion's tone-shaping stage reuses the shared filter object.
+            // Reset it here so stale high-Q / high-resonance state from a previous
+            // Filter slot cannot contaminate the first distortion block.
+            filter.reset();
+            break;
+
+        case FXType::ShimmerReverb:
+            shimReverb.reset();
+            std::fill (shimPitchBufL.begin(), shimPitchBufL.end(), 0.f);
+            std::fill (shimPitchBufR.begin(), shimPitchBufR.end(), 0.f);
+            shimPitchWrite = 0;
+            shimReadPos0   = 0.f;
+            shimReadPos1   = (float) shimPitchBufL.size() * 0.5f;
+            break;
+
+        case FXType::LushChorus:
+            for (int v = 0; v < kLushVoices; ++v)
+            {
+                std::fill (lushBufL[v].begin(), lushBufL[v].end(), 0.f);
+                std::fill (lushBufR[v].begin(), lushBufR[v].end(), 0.f);
+                lushWritePos[v] = 0;
+            }
+            break;
+
+        case FXType::Delay:
+            std::fill (delayBufL.begin(), delayBufL.end(), 0.f);
+            std::fill (delayBufR.begin(), delayBufR.end(), 0.f);
+            delayWritePos = 0;
+            dcBlockInL = dcBlockOutL = dcBlockInR = dcBlockOutR = 0.f;
+            break;
+
+        default:
+            break;
     }
     lastType = type;
 }
@@ -108,6 +134,16 @@ void FXProcessor::process (juce::AudioBuffer<float>& buffer,
 {
     if (params.bypass || params.type == FXType::None) return;
     if (params.type != lastType) reinitEffect (params.type);
+
+    // Guard: non-conformant hosts may send blocks larger than the maxBlockSize
+    // declared in prepareToPlay.  dryBuffer is used by processFilter and
+    // processDistortion — ensure it's large enough before any helper runs.
+    {
+        const int n  = buffer.getNumSamples();
+        const int nc = buffer.getNumChannels();
+        if (n > dryBuffer.getNumSamples() || nc > dryBuffer.getNumChannels())
+            dryBuffer.setSize (nc, n, false, true, true);
+    }
 
     switch (params.type)
     {
@@ -186,16 +222,17 @@ void FXProcessor::processDelay (juce::AudioBuffer<float>& buffer,
         const float wetL = delayBufL[readPos];
         const float wetR = delayBufR[readPos];
 
-        if (pingPong)
-        {
-            delayBufL[delayWritePos] = dryR + wetR * feedback;
-            delayBufR[delayWritePos] = dryL + wetL * feedback;
-        }
-        else
-        {
-            delayBufL[delayWritePos] = dryL + wetL * feedback;
-            delayBufR[delayWritePos] = dryR + wetR * feedback;
-        }
+        // DC-blocking first-order HPF in the feedback path.
+        // y[n] = x[n] - x[n-1] + R*y[n-1],  R=kDCCoeff ≈ cutoff 1.4 Hz.
+        // Prevents DC from ringing up to saturation under high feedback.
+        const float rawL = pingPong ? (dryR + wetR * feedback) : (dryL + wetL * feedback);
+        const float rawR = pingPong ? (dryL + wetL * feedback) : (dryR + wetR * feedback);
+        const float filtL = rawL - dcBlockInL + kDCCoeff * dcBlockOutL;
+        const float filtR = rawR - dcBlockInR + kDCCoeff * dcBlockOutR;
+        dcBlockInL = rawL;   dcBlockOutL = filtL;
+        dcBlockInR = rawR;   dcBlockOutR = filtR;
+        delayBufL[delayWritePos] = filtL;
+        delayBufR[delayWritePos] = filtR;
 
         buffer.setSample (0, s, dryL * (1.f - mix) + wetL * mix);
         if (hasStereo)
@@ -230,27 +267,48 @@ void FXProcessor::processDistortion (juce::AudioBuffer<float>& buffer,
 {
     const float drive = params.p1 * 9.f + 1.f;  // 1–10
     const float mix   = params.mix;
+    const int numSamples  = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
 
-    // Pre-gain tone shaping — simple 1-pole LP using tone param as cutoff
-    const float toneCutoff = 500.f + params.p2 * 19500.f; // 500Hz–20kHz
+    // Pre-gain tone shaping — simple 1-pole LP using tone param as cutoff.
+    // Capped at 45% Nyquist for the same stability reason as processFilter.
+    const float maxCutoff  = (float) (sampleRate * 0.45);
+    const float toneCutoff = juce::jlimit (500.f, maxCutoff, 500.f + params.p2 * 19500.f);
     filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
     filter.setCutoffFrequency (toneCutoff);
     filter.setResonance (0.5f);
 
-    juce::dsp::AudioBlock<float>              block (buffer);
-    juce::dsp::ProcessContextReplacing<float> ctx   (block);
-    filter.process (ctx);
-
-    // Waveshaping: soft clip via tanh
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    juce::dsp::AudioBlock<float> block (buffer);
     {
-        auto* data = buffer.getWritePointer (ch);
-        for (int s = 0; s < buffer.getNumSamples(); ++s)
-        {
-            const float dry = data[s];
-            const float wet = std::tanh (dry * drive);
-            data[s] = dry * (1.f - mix) + wet * mix;
-        }
+        juce::dsp::ProcessContextReplacing<float> ctx (block);
+        filter.process (ctx);
+    }
+
+    // Save pre-waveshaper signal for dry/wet blend
+    for (int ch = 0; ch < numChannels; ++ch)
+        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+    // 2× oversample → tanh waveshaper → downsample.
+    // Oversampling doubles the Nyquist ceiling so harmonics generated by tanh
+    // that would alias back into the audio band are instead above the new
+    // Nyquist and are removed by the decimation low-pass filter.
+    auto oversampledBlock = distortionOversampler.processSamplesUp (block);
+
+    for (size_t ch = 0; ch < oversampledBlock.getNumChannels(); ++ch)
+    {
+        auto* data = oversampledBlock.getChannelPointer (ch);
+        const size_t n = oversampledBlock.getNumSamples();
+        for (size_t s = 0; s < n; ++s)
+            data[s] = std::tanh (data[s] * drive);
+    }
+
+    distortionOversampler.processSamplesDown (block);
+
+    // Wet/dry blend: buffer = wet*mix + dry*(1-mix)
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        buffer.applyGain (ch, 0, numSamples, mix);
+        buffer.addFrom   (ch, 0, dryBuffer, ch, 0, numSamples, 1.f - mix);
     }
 }
 
@@ -260,8 +318,10 @@ void FXProcessor::processDistortion (juce::AudioBuffer<float>& buffer,
 void FXProcessor::processFilter (juce::AudioBuffer<float>& buffer,
                                   const FXSlotParams& params)
 {
-    const float cutoff = 20.f * std::pow (1000.f, params.p1); // 20Hz–20kHz
-    filter.setCutoffFrequency (juce::jlimit (20.f, 20000.f, cutoff));
+    // Cap at 45% of Nyquist — the SVF can become unstable at high Q near Nyquist
+    const float maxCutoff = (float) (sampleRate * 0.45);
+    const float cutoff    = 20.f * std::pow (1000.f, params.p1); // 20Hz–20kHz
+    filter.setCutoffFrequency (juce::jlimit (20.f, maxCutoff, cutoff));
     filter.setResonance       (0.5f + params.p2 * 9.5f);      // 0.5–10
 
     if (params.p3 < 0.33f)
@@ -271,16 +331,22 @@ void FXProcessor::processFilter (juce::AudioBuffer<float>& buffer,
     else
         filter.setType (juce::dsp::StateVariableTPTFilterType::bandpass);
 
-    // Store dry, process, then mix
-    dryBuffer.makeCopyOf (buffer);
+    // Store dry, process wet through filter, then blend
+    const int numSamples  = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+    for (int ch = 0; ch < numChannels; ++ch)
+        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 
     juce::dsp::AudioBlock<float>              block (buffer);
     juce::dsp::ProcessContextReplacing<float> ctx   (block);
     filter.process (ctx);
 
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        buffer.addFrom (ch, 0, dryBuffer, ch, 0, buffer.getNumSamples(),
-                        -(1.f - params.mix)); // scale wet by mix, re-add dry portion
+    // buffer = wet*mix + dry*(1-mix)
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        buffer.applyGain  (ch, 0, numSamples, params.mix);
+        buffer.addFrom    (ch, 0, dryBuffer, ch, 0, numSamples, 1.f - params.mix);
+    }
 }
 
 //==============================================================================
@@ -315,8 +381,8 @@ void FXProcessor::processShimmerReverb (juce::AudioBuffer<float>& buffer,
         // Hann window crossfade (position-based)
         const float t0 = std::fmod (shimReadPos0, (float) pitchBufSz) / (float) pitchBufSz;
         const float t1 = std::fmod (shimReadPos1, (float) pitchBufSz) / (float) pitchBufSz;
-        const float w0 = 0.5f * (1.f - std::cos (t0 * 6.283185f));
-        const float w1 = 0.5f * (1.f - std::cos (t1 * 6.283185f));
+        const float w0 = 0.5f * (1.f - std::cos (t0 * juce::MathConstants<float>::twoPi));
+        const float w1 = 0.5f * (1.f - std::cos (t1 * juce::MathConstants<float>::twoPi));
 
         const float shimL = readBuf (shimPitchBufL, shimReadPos0) * w0
                           + readBuf (shimPitchBufL, shimReadPos1) * w1;
@@ -388,7 +454,7 @@ void FXProcessor::processLushChorus (juce::AudioBuffer<float>& buffer,
         {
             // Advance LFO
             lushLfoPhase[v] = std::fmod (lushLfoPhase[v] + rateMults[v] * baseRate / (float) sampleRate, 1.f);
-            const float lfoSine = std::sin (lushLfoPhase[v] * 6.283185f);
+            const float lfoSine = std::sin (lushLfoPhase[v] * juce::MathConstants<float>::twoPi);
 
             // Fractional delay in samples
             const float delaySamples = juce::jlimit (1.f, (float) lushBufL[v].size() - 2.f,
@@ -448,22 +514,28 @@ void FXChain::process (juce::AudioBuffer<float>&           buffer,
                         juce::AudioProcessorValueTreeState& apvts,
                         double                              bpm)
 {
-    auto getF = [&] (const juce::String& id) -> float
+    // Pre-built param ID strings — avoids juce::String construction on the audio thread.
+    static const char* typeIds[]   = { "fxType0",   "fxType1",   "fxType2",   "fxType3"   };
+    static const char* bypassIds[] = { "fxBypass0", "fxBypass1", "fxBypass2", "fxBypass3" };
+    static const char* p1Ids[]     = { "fxP10",     "fxP11",     "fxP12",     "fxP13"     };
+    static const char* p2Ids[]     = { "fxP20",     "fxP21",     "fxP22",     "fxP23"     };
+    static const char* p3Ids[]     = { "fxP30",     "fxP31",     "fxP32",     "fxP33"     };
+    static const char* mixIds[]    = { "fxMix0",    "fxMix1",    "fxMix2",    "fxMix3"    };
+
+    auto getF = [&] (const char* id) -> float
     {
         return apvts.getRawParameterValue (id)->load();
     };
 
     for (int i = 0; i < numSlots; ++i)
     {
-        const juce::String s (i);
-
         FXSlotParams p;
-        p.type   = static_cast<FXType> ((int) getF ("fxType"   + s));
-        p.bypass = getF ("fxBypass" + s) > 0.5f;
-        p.p1     = getF ("fxP1"     + s);
-        p.p2     = getF ("fxP2"     + s);
-        p.p3     = getF ("fxP3"     + s);
-        p.mix    = getF ("fxMix"    + s);
+        p.type   = static_cast<FXType> ((int) getF (typeIds[i]));
+        p.bypass = getF (bypassIds[i]) > 0.5f;
+        p.p1     = getF (p1Ids[i]);
+        p.p2     = getF (p2Ids[i]);
+        p.p3     = getF (p3Ids[i]);
+        p.mix    = getF (mixIds[i]);
 
         slots[(size_t) i]->process (buffer, p, bpm);
     }

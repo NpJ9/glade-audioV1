@@ -119,11 +119,8 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     // ── Beat sync button ─────────────────────────────────────────────────────
     beatSyncButton.setColour (juce::ToggleButton::tickColourId,         cyan);
     beatSyncButton.setColour (juce::ToggleButton::tickDisabledColourId, textDim);
-    {
-        auto* att = new juce::AudioProcessorValueTreeState::ButtonAttachment (
-            p.apvts, "beatSync", beatSyncButton);
-        beatSyncAtt.reset (att);
-    }
+    beatSyncAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        p.apvts, "beatSync", beatSyncButton);
     addAndMakeVisible (beatSyncButton);
     addAndMakeVisible (beatDivCombo);
 
@@ -253,13 +250,11 @@ void GladeAudioProcessorEditor::timerCallback()
                               audioFreqHz);
 
     // ── LFO visual feedback (active LFO only) ────────────────────────────────
-    const char* depthId  = activeLfo == 0 ? "lfoDepth"  : activeLfo == 1 ? "lfoDepth2"  : "lfoDepth3";
-    const char* shapeId  = activeLfo == 0 ? "lfoShape"  : activeLfo == 1 ? "lfoShape2"  : "lfoShape3";
-    const char* targetId = activeLfo == 0 ? "lfoTarget" : activeLfo == 1 ? "lfoTarget2" : "lfoTarget3";
+    static const char* lfoDepthIds[] = { "lfoDepth",  "lfoDepth2",  "lfoDepth3"  };
+    static const char* lfoShapeIds[] = { "lfoShape",  "lfoShape2",  "lfoShape3"  };
 
-    const float lfoDepth = getF (depthId);
-    const int   lfoShape = (int) getF (shapeId);
-    juce::ignoreUnused (targetId);
+    const float lfoDepth = getF (lfoDepthIds[activeLfo]);
+    const int   lfoShape = (int) getF (lfoShapeIds[activeLfo]);
 
     const float lfoPhase = activeLfo == 0 ? audioProcessor.granularEngine.getLfoPhase()
                          : activeLfo == 1 ? audioProcessor.granularEngine.getLfoPhase2()
@@ -315,10 +310,13 @@ void GladeAudioProcessorEditor::timerCallback()
 
     // ── Step sequencer UI sync ────────────────────────────────────────────────
     {
+        static const char* stepIds[] = {
+            "seqStep0","seqStep1","seqStep2","seqStep3","seqStep4","seqStep5","seqStep6","seqStep7",
+            "seqStep8","seqStep9","seqStep10","seqStep11","seqStep12","seqStep13","seqStep14","seqStep15"
+        };
         float stepVals[StepSequencer::kNumSteps];
         for (int i = 0; i < StepSequencer::kNumSteps; ++i)
-            stepVals[i] = audioProcessor.apvts.getRawParameterValue (
-                "seqStep" + juce::String (i))->load();
+            stepVals[i] = audioProcessor.apvts.getRawParameterValue (stepIds[i])->load();
         stepSeqUI.setStepValues (stepVals);
         stepSeqUI.setCurrentStep (
             getF ("seqActive") > 0.5f

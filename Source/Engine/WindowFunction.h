@@ -12,13 +12,26 @@ namespace WindowFunction
         switch (type)
         {
             case WindowType::Hanning:
-                return 0.5f * (1.0f - std::cos (6.283185307f * phase));
+                return 0.5f * (1.0f - std::cos (juce::MathConstants<float>::twoPi * phase));
 
             case WindowType::Gaussian:
             {
-                // Centre the gaussian at 0.5, sigma ~0.18 so it touches 0 at edges
+                // Raised-cosine Gaussian, centred at 0.5 (sigma = 0.18).
+                //
+                // A plain Gaussian never truly reaches 0; at the grain edges
+                // (phase = 0 or 1) it evaluates to:
+                //   exp(-0.25 / (2 * 0.18^2)) ≈ 0.0214
+                //
+                // That ~2.1% pedestal accumulates as DC when hundreds of grains
+                // overlap.  Fix: subtract the pedestal value and renormalise so
+                // the window is exactly 0 at the edges and 1.0 at the centre.
+                static constexpr float kSigma    = 0.18f;
+                static constexpr float kVar2     = 2.0f * kSigma * kSigma;          // 0.0648
+                static constexpr float kPedestal = 0.02140f;  // exp(-0.25 / kVar2)
+
                 const float x = phase - 0.5f;
-                return std::exp (-x * x / (2.0f * 0.18f * 0.18f));
+                const float g = std::exp (-x * x / kVar2);
+                return juce::jmax (0.f, (g - kPedestal) / (1.0f - kPedestal));
             }
 
             case WindowType::Trapezoid:

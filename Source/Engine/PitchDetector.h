@@ -44,13 +44,22 @@ namespace PitchDetector
         const int minLag = juce::jmax (1,              (int) (sampleRate / 2000.0));
         const int maxLag = juce::jmin (windowSize / 2, (int) (sampleRate / 50.0));
 
+        // Pearson correlation: normalises by the power of the overlapping segment
+        // only, not the full window.  The biased form (c / power) undervalues long
+        // lags because it divides a shorter sum by the full-window denominator,
+        // creating a systematic preference for higher-octave candidates.
         auto normCorr = [&] (int lag) -> float
         {
-            float c = 0.f;
+            float c = 0.f, p0 = 0.f, p1 = 0.f;
             const int n = windowSize - lag;
             for (int i = 0; i < n; ++i)
-                c += mono[i] * mono[i + lag];
-            return c / power;
+            {
+                c  += mono[i] * mono[i + lag];
+                p0 += mono[i] * mono[i];
+                p1 += mono[i + lag] * mono[i + lag];
+            }
+            const float denom = std::sqrt (p0 * p1);
+            return (denom > 1e-9f) ? c / denom : 0.f;
         };
 
         float bestCorr = 0.f;

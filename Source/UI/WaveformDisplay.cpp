@@ -47,37 +47,51 @@ void WaveformDisplay::setWavetableMode (bool on, const juce::AudioBuffer<float>*
 
 void WaveformDisplay::buildWaveformPath (const juce::AudioBuffer<float>& buffer)
 {
-    waveformPath.clear();
     if (buffer.getNumSamples() == 0) return;
 
-    const float w = (float) getWidth();
-    const float h = (float) getHeight();
-    const float mid = h * 0.5f;
+    // Use a fixed internal resolution of 1024 columns to make the cached data
+    // independent of the component's current width.
+    constexpr int kCols = 1024;
+    waveformPeaks.resize (kCols);
 
-    const int numSamples = buffer.getNumSamples();
-    const auto* data = buffer.getReadPointer (0);
-    const int step = juce::jmax (1, numSamples / (int) w);
+    const int   numSamples = buffer.getNumSamples();
+    const auto* data       = buffer.getReadPointer (0);
+
+    for (int x = 0; x < kCols; ++x)
+    {
+        const int start = (int) ((float) x / (float) kCols * (float) numSamples);
+        const int end   = juce::jmin (start + juce::jmax (1, numSamples / kCols), numSamples);
+        float peak = 0.f;
+        for (int s = start; s < end; ++s)
+            peak = juce::jmax (peak, std::abs (data[s]));
+        waveformPeaks[x] = peak;
+    }
+
+    rebuildPathFromPeaks();
+}
+
+void WaveformDisplay::rebuildPathFromPeaks()
+{
+    waveformPath.clear();
+    if (waveformPeaks.empty()) return;
+
+    const float w   = (float) getWidth();
+    const float h   = (float) getHeight();
+    const float mid = h * 0.5f;
+    const int   n   = (int) waveformPeaks.size();
 
     waveformPath.startNewSubPath (0.f, mid);
 
     for (int x = 0; x < (int) w; ++x)
     {
-        float peak = 0.f;
-        const int start = (int) ((float) x / w * (float) numSamples);
-        for (int s = start; s < juce::jmin (start + step, numSamples); ++s)
-            peak = juce::jmax (peak, std::abs (data[s]));
-
+        const int   col  = juce::jlimit (0, n - 1, (int) ((float) x / w * (float) n));
+        const float peak = waveformPeaks[col];
         waveformPath.lineTo ((float) x, mid - peak * mid * 0.9f);
     }
-
-    // Mirror for bottom half
     for (int x = (int) w - 1; x >= 0; --x)
     {
-        float peak = 0.f;
-        const int start = (int) ((float) x / w * (float) numSamples);
-        for (int s = start; s < juce::jmin (start + step, numSamples); ++s)
-            peak = juce::jmax (peak, std::abs (data[s]));
-
+        const int   col  = juce::jlimit (0, n - 1, (int) ((float) x / w * (float) n));
+        const float peak = waveformPeaks[col];
         waveformPath.lineTo ((float) x, mid + peak * mid * 0.9f);
     }
 
@@ -128,8 +142,9 @@ void WaveformDisplay::paint (juce::Graphics& g)
         // Root note label — bottom-right corner pill badge
         if (rootNoteName.isNotEmpty())
         {
-            g.setFont (juce::Font (juce::FontOptions{}.withHeight (13.f).withStyle ("Bold")));
-            const int textW  = (int) g.getCurrentFont().getStringWidthFloat (rootNoteName) + 12;
+            const juce::Font badgeFont (juce::FontOptions{}.withHeight (13.f).withStyle ("Bold"));
+            g.setFont (badgeFont);
+            const int textW  = (int) badgeFont.getStringWidthFloat (rootNoteName) + 12;
             const int textH  = 20;
             const int bx     = getWidth()  - textW - 5;
             const int by     = getHeight() - textH - 5;
@@ -161,6 +176,10 @@ void WaveformDisplay::paint (juce::Graphics& g)
 void WaveformDisplay::resized()
 {
     positionSlider.setBounds (getLocalBounds());
+
+    // Rebuild the path for the new dimensions without re-scanning the buffer.
+    if (hasWaveform && !waveformPeaks.empty())
+        rebuildPathFromPeaks();
 }
 
 //==============================================================================

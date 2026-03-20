@@ -53,8 +53,13 @@ void GrainScheduler::process (int        numSamples,
             float panL, panR;
             calcPan (panRandom, panL, panR);
 
+            // 1/sqrt(overlap) compensation: maintains constant perceived loudness
+            // as density and grain size increase (constant-power summation model).
+            const float expectedOverlap = juce::jmax (1.f,
+                (float) densityClamped * grainSizeMs * 0.001f);
+            const float amplitude = 1.0f / std::sqrt (expectedOverlap);
             pool.activateGrain (startPos, grainLengthSamples, finalPitchRatio,
-                                panL, panR, 1.0f, windowType);
+                                panL, panR, amplitude, windowType);
 
             // Reset countdown with slight jitter on the interval itself (±5%)
             const double intervalJitter = intervalSamples * 0.05 * (random.nextDouble() * 2.0 - 1.0);

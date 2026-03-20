@@ -5,18 +5,18 @@
 // Glade colour palette
 namespace GladeColors
 {
-    const juce::Colour background  { 0xff090b10 };
-    const juce::Colour panel       { 0xff111318 };
-    const juce::Colour panelRaised { 0xff191d28 };
-    const juce::Colour border      { 0xff1e2436 };
-    const juce::Colour textPrimary { 0xffdde4f0 };
-    const juce::Colour textDim     { 0xff8898b8 };
+    constexpr juce::Colour background  { 0xff090b10 };
+    constexpr juce::Colour panel       { 0xff111318 };
+    constexpr juce::Colour panelRaised { 0xff191d28 };
+    constexpr juce::Colour border      { 0xff1e2436 };
+    constexpr juce::Colour textPrimary { 0xffdde4f0 };
+    constexpr juce::Colour textDim     { 0xff8898b8 };
 
-    const juce::Colour cyan        { 0xff00e5d4 };
-    const juce::Colour green       { 0xff1aff8c };
-    const juce::Colour magenta     { 0xffff2a6d };
-    const juce::Colour purple      { 0xff9b5de5 };
-    const juce::Colour yellow      { 0xfff5c518 };
+    constexpr juce::Colour cyan        { 0xff00e5d4 };
+    constexpr juce::Colour green       { 0xff1aff8c };
+    constexpr juce::Colour magenta     { 0xffff2a6d };
+    constexpr juce::Colour purple      { 0xff9b5de5 };
+    constexpr juce::Colour yellow      { 0xfff5c518 };
 }
 
 //==============================================================================

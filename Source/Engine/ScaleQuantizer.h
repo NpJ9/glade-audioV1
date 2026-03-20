@@ -26,8 +26,12 @@ namespace ScaleQuantizer
 
     /** Returns the nearest in-scale semitone offset to `semitones`.
      *  rootNote 0-11 = C .. B (shifts which chromatic notes are "in scale").
-     *  scaleIdx 0 → returns semitones unchanged. */
-    inline float quantize (float semitones, int scaleIdx, int /*rootNote*/)
+     *  scaleIdx 0 → returns semitones unchanged.
+     *
+     *  Algorithm: shift the input into root-relative space, find the nearest
+     *  scale degree, then shift the result back to absolute semitone space.
+     *  This correctly transposes the scale to any root note. */
+    inline float quantize (float semitones, int scaleIdx, int rootNote)
     {
         if (scaleIdx == 0) return semitones;
 
@@ -35,15 +39,20 @@ namespace ScaleQuantizer
         float bestDist = 1e9f;
         float bestSemi = 0.f;
 
+        // Express the input relative to the chosen root before comparing intervals
+        const float shifted = semitones - (float) rootNote;
+
         for (int oct = -2; oct <= 2; ++oct)
         {
             for (int i = 0; i < sd.count; ++i)
             {
-                const float c2 = (float)(sd.intervals[i] + oct * 12);
-                const float dist = std::abs (semitones - c2);
+                const float c2   = (float) (sd.intervals[i] + oct * 12);
+                const float dist = std::abs (shifted - c2);
                 if (dist < bestDist) { bestDist = dist; bestSemi = c2; }
             }
         }
-        return bestSemi;
+
+        // Translate the root-relative result back to absolute semitone space
+        return bestSemi + (float) rootNote;
     }
 }

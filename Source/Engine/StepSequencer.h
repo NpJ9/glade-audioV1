@@ -43,7 +43,11 @@ public:
 
     void reset() noexcept
     {
-        currentStep = 0;
+        // Initialise to kNumSteps-1 so that the mandatory first advance in
+        // process() wraps to step 0.  Previously currentStep was 0 here, which
+        // caused the very first process() call to advance to step 1, silently
+        // skipping step 0 on every sequence start.
+        currentStep = kNumSteps - 1;
         samplesUntilAdvance = 0.0;
         currentStepAtomic.store (0, std::memory_order_relaxed);
     }

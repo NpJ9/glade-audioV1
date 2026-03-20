@@ -26,6 +26,7 @@ bool SampleBuffer::loadFile (const juce::File& file, double targetSampleRate)
     }
 
     // Resample if needed
+    juce::AudioBuffer<float> result;
     if (std::abs (originalSampleRate - targetSampleRate) > 1.0)
     {
         const double ratio = targetSampleRate / originalSampleRate;
@@ -42,12 +43,19 @@ bool SampleBuffer::loadFile (const juce::File& file, double targetSampleRate)
                                newLength);
         }
 
-        buffer = std::move (resampled);
+        result = std::move (resampled);
     }
     else
     {
-        buffer = std::move (rawBuffer);
+        result = std::move (rawBuffer);
     }
+
+    // Write into the inactive slot then flip the read index atomically.
+    // The audio thread always reads from buffers[readIdx] — no lock needed.
+    // Peak memory: the old buffer stays alive until the next load overwrites it.
+    const int writeIdx = 1 - readIdx.load (std::memory_order_acquire);
+    buffers[writeIdx] = std::move (result);
+    readIdx.store (writeIdx, std::memory_order_release);
 
     return true;
 }
