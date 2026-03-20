@@ -68,11 +68,17 @@ void GrainPool::process (juce::AudioBuffer<float>& output,
             //
             // y(t) = ((c3*t + c2)*t + c1)*t + c0,  t in [0,1)
             // using Catmull-Rom tension (0.5) for smooth yet accurate reconstruction.
-            const int   i1   = juce::jlimit (0, numSrcSamples - 1, (int) g.sourceReadPos);
+            //
+            // IMPORTANT: sourceReadPos must be clamped BEFORE computing i1 and t.
+            // If only i1 is clamped (as was done before), t = sourceReadPos - i1
+            // grows unboundedly past the buffer end (t=2, 10, 1000…) and the
+            // cubic extrapolates to huge values — audible as clicks at position=1.0.
+            const double clampedPos = juce::jlimit (0.0, (double) (numSrcSamples - 1), g.sourceReadPos);
+            const int   i1   = (int) clampedPos;
             const int   i0   = juce::jmax (0, i1 - 1);
             const int   i2   = juce::jmin (numSrcSamples - 1, i1 + 1);
             const int   i3   = juce::jmin (numSrcSamples - 1, i1 + 2);
-            const float t    = (float) (g.sourceReadPos - (double) i1);
+            const float t    = (float) (clampedPos - (double) i1);
 
             auto hermite = [&] (const float* buf) -> float
             {
