@@ -53,11 +53,26 @@ void GrainScheduler::process (int        numSamples,
             float panL, panR;
             calcPan (panRandom, panL, panR);
 
-            // 1/sqrt(overlap) compensation: maintains constant perceived loudness
-            // as density and grain size increase (constant-power summation model).
+            // Amplitude normalization — the correct formula depends on whether
+            // grains are coherent (same source position → same waveform) or
+            // incoherent (spread across the sample → random phase).
+            //
+            // Incoherent (high jitter): 1/sqrt(N) — constant-power summation.
+            //   N coherent grains each at 1/sqrt(N) → sum peaks at sqrt(N) → CLIPS.
+            //
+            // Coherent (jitter ≈ 0): 1/N — constant-amplitude summation.
+            //   N coherent grains each at 1/N → sum peaks at 1.0 → safe.
+            //
+            // The SEQ at a fixed step with low posJitter is the coherent case.
+            // We crossfade between the two normalizations using positionJitter
+            // as the blend factor (fully coherent at 0, fully incoherent at 0.125+).
             const float expectedOverlap = juce::jmax (1.f,
                 (float) densityClamped * grainSizeMs * 0.001f);
-            const float amplitude = 1.0f / std::sqrt (expectedOverlap);
+            const float coherentAmp     = 1.0f / expectedOverlap;
+            const float incoherentAmp   = 1.0f / std::sqrt (expectedOverlap);
+            const float jitterBlend     = juce::jlimit (0.f, 1.f, positionJitter * 8.f);
+            const float amplitude       = coherentAmp   * (1.f - jitterBlend)
+                                        + incoherentAmp * jitterBlend;
             pool.activateGrain (startPos, grainLengthSamples, finalPitchRatio,
                                 panL, panR, amplitude, windowType);
 

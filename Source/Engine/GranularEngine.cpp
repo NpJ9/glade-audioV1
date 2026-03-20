@@ -226,6 +226,16 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
     wetBuffer.clear();
     grainPool.process (wetBuffer, source);
 
+    // Safety clamp: coherent grains (low jitter / fixed SEQ position) can
+    // temporarily exceed 0 dBFS.  ±4 FS headroom still passes legitimate
+    // loud transients but prevents NaN / Inf from escaping to the host.
+    for (int ch = 0; ch < wetBuffer.getNumChannels(); ++ch)
+    {
+        auto* data = wetBuffer.getWritePointer (ch);
+        for (int s = 0; s < numSamples; ++s)
+            data[s] = juce::jlimit (-4.f, 4.f, data[s]);
+    }
+
     // ── Envelope follower update ──────────────────────────────────────────────
     {
         float rmsSum = 0.f;
