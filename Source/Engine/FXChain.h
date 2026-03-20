@@ -93,7 +93,7 @@ private:
     int    maxBlockSize = 512;
     juce::dsp::StateVariableTPTFilter<float> filter;
     juce::dsp::Oversampling<float> oversampler {
-        2, 1, juce::dsp::Oversampling<float>::filterHaasHoldout_polyphaseIIR };
+        2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR };
     juce::AudioBuffer<float> dryBuffer;
 };
 
