@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "Engine/PresetManager.h"
 #include "UI/GladeLookAndFeel.h"
 #include "UI/GladeKnob.h"
 #include "UI/WaveformDisplay.h"
@@ -36,8 +37,10 @@ private:
                                 juce::Random& rng);
 
     GladeAudioProcessor& audioProcessor;
+    PresetManager        presetManager;
     GladeLookAndFeel     laf;
     juce::Random         rng;
+    int                  cachedGrainCount = 0;
 
     //==========================================================================
     // Header

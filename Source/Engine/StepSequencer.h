@@ -1,15 +1,16 @@
 #pragma once
+#include "GladeConstants.h"
 #include <atomic>
 #include <cmath>
 
 /** 8-step position sequencer.
  *  Call process() each audio block; it advances by beat division and returns
  *  the current step's position value (0-1), or -1.f if inactive.
- *  Reads step values as raw floats (passed in from APVTS each block). */
+ *  Reads step values as raw floats (passed in from GrainParams each block). */
 class StepSequencer
 {
 public:
-    static constexpr int kNumSteps = 8;
+    static constexpr int kNumSteps = Glade::kSeqNumSteps;
 
     /** Process one audio block.
      *  stepValues: array of kNumSteps floats (0-1), read from APVTS.

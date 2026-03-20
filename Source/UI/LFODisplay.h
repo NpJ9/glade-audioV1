@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "GladeLookAndFeel.h"
+#include "../Engine/LFOFunction.h"
 
 /** Small animated LFO waveform display.
  *  Call setLfoState() from the editor's timerCallback, then repaint(). */
@@ -96,16 +97,10 @@ private:
     float lfoPhase = 0.f;
     float lfoDepth = 0.f;
 
+    // Delegate to the shared evaluator so audio and UI always use identical math.
     static float evaluateLFO (int shape, float t) noexcept
     {
-        switch (shape)
-        {
-            case 0: return std::sin (t * juce::MathConstants<float>::twoPi);
-            case 1: return 1.f - 4.f * std::abs (t - 0.5f);   // Triangle
-            case 2: return t * 2.f - 1.f;                      // Saw
-            case 3: return t < 0.5f ? 1.f : -1.f;             // Square
-            default: return 0.f;                                // S&H — static
-        }
+        return LFOFunction::evaluate (shape, t);
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LFODisplay)

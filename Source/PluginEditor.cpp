@@ -1,7 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "Engine/PitchDetector.h"
-#include "Engine/StepSequencer.h"
+#include "Engine/GladeConstants.h"
 
 using namespace GladeColors;
 
@@ -57,7 +56,7 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     addAndMakeVisible (logoLabel);
 
     // Preset nav
-    presetNameLabel.setText (audioProcessor.presetManager.getCurrentName(),
+    presetNameLabel.setText (presetManager.getCurrentName(),
                              juce::dontSendNotification);
     presetNameLabel.setFont (juce::Font (juce::FontOptions{}.withHeight (16.f).withStyle ("Bold")));
     presetNameLabel.setColour (juce::Label::textColourId, textPrimary);
@@ -72,14 +71,14 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     }
     prevPresetButton.onClick = [this]
     {
-        audioProcessor.presetManager.prevPreset (audioProcessor.apvts);
-        presetNameLabel.setText (audioProcessor.presetManager.getCurrentName(),
+        presetManager.prevPreset (audioProcessor.apvts);
+        presetNameLabel.setText (presetManager.getCurrentName(),
                                  juce::dontSendNotification);
     };
     nextPresetButton.onClick = [this]
     {
-        audioProcessor.presetManager.nextPreset (audioProcessor.apvts);
-        presetNameLabel.setText (audioProcessor.presetManager.getCurrentName(),
+        presetManager.nextPreset (audioProcessor.apvts);
+        presetNameLabel.setText (presetManager.getCurrentName(),
                                  juce::dontSendNotification);
     };
 
@@ -108,13 +107,13 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     {
         const bool ok = audioProcessor.loadSample (f);
         if (ok)
-            waveformDisplay.setSampleBuffer (audioProcessor.granularEngine.getSampleBuffer());
+            waveformDisplay.setSampleBuffer (audioProcessor.getSampleBuffer());
         return ok;
     };
 
     // Populate waveform if a sample was already loaded (e.g. restored from state)
-    if (audioProcessor.granularEngine.isReady())
-        waveformDisplay.setSampleBuffer (audioProcessor.granularEngine.getSampleBuffer());
+    if (audioProcessor.isSampleLoaded())
+        waveformDisplay.setSampleBuffer (audioProcessor.getSampleBuffer());
 
     // ── Beat sync button ─────────────────────────────────────────────────────
     beatSyncButton.setColour (juce::ToggleButton::tickColourId,         cyan);
@@ -232,21 +231,21 @@ GladeAudioProcessorEditor::~GladeAudioProcessorEditor()
 //==============================================================================
 void GladeAudioProcessorEditor::timerCallback()
 {
+    const auto state = audioProcessor.getState();
+
     auto getF = [&] (const char* id) -> float
     {
         return audioProcessor.apvts.getRawParameterValue (id)->load();
     };
 
-    const int   midiNote    = audioProcessor.granularEngine.getCurrentMidiNote();
-    const float rmsLevel    = audioProcessor.outputRms.load();
-    const float audioFreqHz = (midiNote >= 0)
-        ? 440.f * std::pow (2.f, (float) (midiNote - 69) / 12.f)
+    const float audioFreqHz = (state.currentMidiNote >= 0)
+        ? 440.f * std::pow (2.f, (float) (state.currentMidiNote - 69) / 12.f)
         : 0.f;
 
     fractalVisualizer.update (getF ("grainDensity"),
                               getF ("grainSize"),
-                              midiNote >= 0,
-                              rmsLevel,
+                              state.currentMidiNote >= 0,
+                              state.outputRms,
                               audioFreqHz);
 
     // ── LFO visual feedback (active LFO only) ────────────────────────────────
@@ -256,18 +255,10 @@ void GladeAudioProcessorEditor::timerCallback()
     const float lfoDepth = getF (lfoDepthIds[activeLfo]);
     const int   lfoShape = (int) getF (lfoShapeIds[activeLfo]);
 
-    const float lfoPhase = activeLfo == 0 ? audioProcessor.granularEngine.getLfoPhase()
-                         : activeLfo == 1 ? audioProcessor.granularEngine.getLfoPhase2()
-                                          : audioProcessor.granularEngine.getLfoPhase3();
-
-    // Update LFO waveform display
-    lfoDisplay.setLfoState (lfoShape, lfoPhase, lfoDepth);
+    lfoDisplay.setLfoState (lfoShape, state.lfoPhase[activeLfo], lfoDepth);
     lfoDisplay.repaint();
 
     // Collect all 3 LFO contributions for knob ring overlays
-    const float lfoOut1 = audioProcessor.granularEngine.getLfoOutput();
-    const float lfoOut2 = audioProcessor.granularEngine.getLfoOutput2();
-    const float lfoOut3 = audioProcessor.granularEngine.getLfoOutput3();
     const float lfoDep1 = getF ("lfoDepth");
     const float lfoDep2 = getF ("lfoDepth2");
     const float lfoDep3 = getF ("lfoDepth3");
@@ -276,10 +267,9 @@ void GladeAudioProcessorEditor::timerCallback()
     const int   lfoTgt3 = (int) getF ("lfoTarget3");
 
     // Env follower state
-    const bool  envActive    = getF ("envActive") > 0.5f;
-    const int   envTarget    = (int) getF ("envTarget");
-    const float envDepth     = getF ("envDepth");
-    const float envValue     = audioProcessor.granularEngine.getEnvFollowValue();
+    const bool  envActive = getF ("envActive") > 0.5f;
+    const int   envTarget = (int) getF ("envTarget");
+    const float envDepth  = getF ("envDepth");
 
     // Map target index → knob pointer (shared by LFO and env)
     GladeKnob* modKnobs[] = {
@@ -297,14 +287,14 @@ void GladeAudioProcessorEditor::timerCallback()
 
         // Aggregate contributions from all 3 LFOs targeting this knob
         float combinedOut = 0.f, combinedDep = 0.f;
-        if (i == lfoTgt1 && lfoDep1 > 0.001f) { combinedOut += lfoOut1 * lfoDep1; combinedDep = juce::jmax (combinedDep, lfoDep1); }
-        if (i == lfoTgt2 && lfoDep2 > 0.001f) { combinedOut += lfoOut2 * lfoDep2; combinedDep = juce::jmax (combinedDep, lfoDep2); }
-        if (i == lfoTgt3 && lfoDep3 > 0.001f) { combinedOut += lfoOut3 * lfoDep3; combinedDep = juce::jmax (combinedDep, lfoDep3); }
+        if (i == lfoTgt1 && lfoDep1 > 0.001f) { combinedOut += state.lfoOutput[0] * lfoDep1; combinedDep = juce::jmax (combinedDep, lfoDep1); }
+        if (i == lfoTgt2 && lfoDep2 > 0.001f) { combinedOut += state.lfoOutput[1] * lfoDep2; combinedDep = juce::jmax (combinedDep, lfoDep2); }
+        if (i == lfoTgt3 && lfoDep3 > 0.001f) { combinedOut += state.lfoOutput[2] * lfoDep3; combinedDep = juce::jmax (combinedDep, lfoDep3); }
         if (combinedDep > 0.001f) combinedOut /= combinedDep;
 
         const bool envOn = (i == envTarget && envActive && envDepth > 0.001f);
         modKnobs[i]->setLfoOverlay (combinedDep > 0.001f ? combinedOut : 0.f, combinedDep);
-        modKnobs[i]->setEnvOverlay (envOn ? envValue : 0.f, envOn ? envDepth : 0.f);
+        modKnobs[i]->setEnvOverlay (envOn ? state.envFollowValue : 0.f, envOn ? envDepth : 0.f);
         modKnobs[i]->repaint();
     }
 
@@ -314,24 +304,21 @@ void GladeAudioProcessorEditor::timerCallback()
             "seqStep0","seqStep1","seqStep2","seqStep3","seqStep4","seqStep5","seqStep6","seqStep7",
             "seqStep8","seqStep9","seqStep10","seqStep11","seqStep12","seqStep13","seqStep14","seqStep15"
         };
-        float stepVals[StepSequencer::kNumSteps];
-        for (int i = 0; i < StepSequencer::kNumSteps; ++i)
+        float stepVals[Glade::kSeqNumSteps];
+        for (int i = 0; i < Glade::kSeqNumSteps; ++i)
             stepVals[i] = audioProcessor.apvts.getRawParameterValue (stepIds[i])->load();
         stepSeqUI.setStepValues (stepVals);
-        stepSeqUI.setCurrentStep (
-            getF ("seqActive") > 0.5f
-            ? audioProcessor.granularEngine.getSeqCurrentStep()
-            : -1);
+        stepSeqUI.setCurrentStep (getF ("seqActive") > 0.5f ? state.seqCurrentStep : -1);
     }
 
     // Update root note label + LFO-modulated position on waveform display
-    if (audioProcessor.granularEngine.isReady())
+    if (state.sampleLoaded)
     {
-        waveformDisplay.setRootNote (
-            PitchDetector::midiNoteToName (audioProcessor.granularEngine.getDetectedRootNote()));
-        waveformDisplay.setModulatedPosition (audioProcessor.granularEngine.getModulatedPosition());
+        waveformDisplay.setRootNote (audioProcessor.getRootNoteName());
+        waveformDisplay.setModulatedPosition (state.modulatedPosition);
     }
 
+    cachedGrainCount = state.activeGrainCount;
     repaint (headerArea); // refresh grain count
 }
 
@@ -611,7 +598,7 @@ void GladeAudioProcessorEditor::paint (juce::Graphics& g)
     // Grain count
     g.setColour (textDim);
     g.setFont (juce::Font (juce::FontOptions{}.withHeight (12.f)));
-    g.drawText (juce::String (audioProcessor.granularEngine.getActiveGrainCount()) + " grains",
+    g.drawText (juce::String (cachedGrainCount) + " grains",
                 headerArea.reduced (8, 0).removeFromRight (100),
                 juce::Justification::centredRight);
 

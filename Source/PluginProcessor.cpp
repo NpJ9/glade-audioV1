@@ -167,13 +167,109 @@ void GladeAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 void GladeAudioProcessor::releaseResources()
 {
-    // Release DSP state and free large heap buffers (delay lines, grain buffers)
-    // so the memory is returned to the OS when the plugin is deactivated.
     granularEngine.releaseResources();
     fxChain->reset();
-
-    // Shrink dry buffer to zero — will be reallocated on next prepareToPlay
     dryBuffer.setSize (0, 0);
+}
+
+//==============================================================================
+GrainParams GladeAudioProcessor::buildGrainParams() const
+{
+    // All APVTS reads are concentrated here.  The engine receives a plain struct
+    // and has no dependency on juce::AudioProcessorValueTreeState.
+    auto getF = [this] (const char* id) -> float
+    {
+        return apvts.getRawParameterValue (id)->load();
+    };
+
+    GrainParams p;
+
+    p.attack   = getF ("attack");
+    p.decay    = getF ("decay");
+    p.sustain  = getF ("sustain");
+    p.release  = getF ("release");
+
+    p.grainSizeMs = getF ("grainSize");
+    p.density     = getF ("grainDensity");
+    p.position    = getF ("grainPosition");
+    p.posJitter   = getF ("posJitter");
+    p.pitchShift  = getF ("pitchShift");
+    p.pitchJitter = getF ("pitchJitter");
+    p.panSpread   = getF ("panSpread");
+    p.windowType  = (int) getF ("windowType");
+    p.pitchScale  = (int) getF ("pitchScale");
+    p.pitchRoot   = (int) getF ("pitchRoot");
+    p.outputGainDb = getF ("outputGain");
+
+    p.lfoRate    = getF ("lfoRate");
+    p.lfoDepth   = getF ("lfoDepth");
+    p.lfoShape   = (int) getF ("lfoShape");
+    p.lfoTarget  = (int) getF ("lfoTarget");
+    p.lfoSync    = getF ("lfoSync")    > 0.5f;
+    p.lfoSyncDiv = (int) getF ("lfoSyncDiv");
+
+    p.lfoRate2   = getF ("lfoRate2");
+    p.lfoDepth2  = getF ("lfoDepth2");
+    p.lfoShape2  = (int) getF ("lfoShape2");
+    p.lfoTarget2 = (int) getF ("lfoTarget2");
+
+    p.lfoRate3   = getF ("lfoRate3");
+    p.lfoDepth3  = getF ("lfoDepth3");
+    p.lfoShape3  = (int) getF ("lfoShape3");
+    p.lfoTarget3 = (int) getF ("lfoTarget3");
+
+    p.envActive  = getF ("envActive")  > 0.5f;
+    p.envAttack  = getF ("envAttack");
+    p.envRelease = getF ("envRelease");
+    p.envDepth   = getF ("envDepth");
+    p.envTarget  = (int) getF ("envTarget");
+
+    p.seqActive    = getF ("seqActive") > 0.5f;
+    p.beatDivision = (int) getF ("beatDivision");
+    p.beatSync     = getF ("beatSync") > 0.5f;
+
+    // Static ID array — avoids juce::String allocation on the audio thread
+    static const char* stepIds[] = {
+        "seqStep0","seqStep1","seqStep2","seqStep3",
+        "seqStep4","seqStep5","seqStep6","seqStep7"
+    };
+    static_assert (std::size (stepIds) == Glade::kSeqNumSteps, "stepIds size mismatch");
+
+    for (int i = 0; i < Glade::kSeqNumSteps; ++i)
+        p.seqSteps[i] = apvts.getRawParameterValue (stepIds[i])->load();
+
+    p.bpm = currentBpm;
+
+    return p;
+}
+
+std::array<FXSlotParams, FXChain::numSlots>
+GladeAudioProcessor::buildFXParams() const
+{
+    // Pre-built param ID strings — avoids juce::String construction on audio thread.
+    static const char* typeIds[]   = { "fxType0",   "fxType1",   "fxType2",   "fxType3"   };
+    static const char* bypassIds[] = { "fxBypass0", "fxBypass1", "fxBypass2", "fxBypass3" };
+    static const char* p1Ids[]     = { "fxP10",     "fxP11",     "fxP12",     "fxP13"     };
+    static const char* p2Ids[]     = { "fxP20",     "fxP21",     "fxP22",     "fxP23"     };
+    static const char* p3Ids[]     = { "fxP30",     "fxP31",     "fxP32",     "fxP33"     };
+    static const char* mixIds[]    = { "fxMix0",    "fxMix1",    "fxMix2",    "fxMix3"    };
+
+    auto getF = [this] (const char* id) -> float
+    {
+        return apvts.getRawParameterValue (id)->load();
+    };
+
+    std::array<FXSlotParams, FXChain::numSlots> params;
+    for (int i = 0; i < FXChain::numSlots; ++i)
+    {
+        params[i].type   = static_cast<FXType> ((int) getF (typeIds[i]));
+        params[i].bypass = getF (bypassIds[i]) > 0.5f;
+        params[i].p1     = getF (p1Ids[i]);
+        params[i].p2     = getF (p2Ids[i]);
+        params[i].p3     = getF (p3Ids[i]);
+        params[i].mix    = getF (mixIds[i]);
+    }
+    return params;
 }
 
 //==============================================================================
@@ -188,8 +284,12 @@ void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             if (auto bpm = pos->getBpm())
                 currentBpm = *bpm;
 
+    // ── Build parameter structs from APVTS — single point of APVTS access ────
+    const GrainParams grainParams = buildGrainParams();
+    const auto        fxParams    = buildFXParams();
+
     // ── Run granular engine ───────────────────────────────────────────────────
-    granularEngine.process (buffer, midiMessages, apvts, currentBpm);
+    granularEngine.process (buffer, midiMessages, grainParams);
 
     // ── Output RMS for visualizer ─────────────────────────────────────────────
     float rmsSum = 0.f;
@@ -200,10 +300,6 @@ void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // ── Dry/wet: blend pre-FX (dry) and post-FX (wet) ────────────────────────
     dryWetSmoothed.setTargetValue (apvts.getRawParameterValue ("dryWet")->load());
 
-    // Save granular output before FX.
-    // prepareToPlay() pre-sizes dryBuffer so this path is allocation-free in
-    // normal operation.  The guard below only fires if a DAW sends a block
-    // larger than the size declared in prepareToPlay (non-conformant but real).
     const int numSamples  = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
     if (numSamples > dryBuffer.getNumSamples() || numChannels > dryBuffer.getNumChannels())
@@ -211,11 +307,9 @@ void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (int ch = 0; ch < numChannels; ++ch)
         dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 
-    fxChain->process (buffer, apvts, currentBpm);  // buffer is now post-FX
+    fxChain->process (buffer, fxParams, currentBpm);
 
-    // Per-sample smoothed blend eliminates zipper noise when dryWet is automated.
-    // The smoother advances once per sample (outer loop) so each channel gets
-    // the same gain value at each sample position.
+    // Per-sample smoothed blend eliminates zipper noise on dryWet automation
     for (int s = 0; s < numSamples; ++s)
     {
         const float w = dryWetSmoothed.getNextValue();
@@ -227,15 +321,45 @@ void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 }
 
 //==============================================================================
+PluginState GladeAudioProcessor::getState() const noexcept
+{
+    PluginState s;
+    s.lfoPhase[0]  = granularEngine.getLfoPhase();
+    s.lfoPhase[1]  = granularEngine.getLfoPhase2();
+    s.lfoPhase[2]  = granularEngine.getLfoPhase3();
+    s.lfoOutput[0] = granularEngine.getLfoOutput();
+    s.lfoOutput[1] = granularEngine.getLfoOutput2();
+    s.lfoOutput[2] = granularEngine.getLfoOutput3();
+
+    s.envFollowValue    = granularEngine.getEnvFollowValue();
+    s.modulatedPosition = granularEngine.getModulatedPosition();
+    s.currentMidiNote   = granularEngine.getCurrentMidiNote();
+    s.detectedRootNote  = granularEngine.getDetectedRootNote();
+    s.seqCurrentStep    = granularEngine.getSeqCurrentStep();
+    s.activeGrainCount  = granularEngine.getActiveGrainCount();
+    s.outputRms         = outputRms.load();
+    s.sampleLoaded      = granularEngine.isReady();
+    return s;
+}
+
+bool GladeAudioProcessor::loadSample (const juce::File& file)
+{
+    const bool ok = granularEngine.loadSample (file);
+    if (ok) lastLoadedFile = file;
+    return ok;
+}
+
+juce::String GladeAudioProcessor::getRootNoteName() const
+{
+    return PitchDetector::midiNoteToName (granularEngine.getDetectedRootNote());
+}
+
+//==============================================================================
 void GladeAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
-
-    // Save the loaded sample file path
-    // (stored outside APVTS since file paths are not parameters)
     if (granularEngine.isReady())
         state.setProperty ("samplePath", lastLoadedFile.getFullPathName(), nullptr);
-
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }

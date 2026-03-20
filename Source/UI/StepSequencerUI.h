@@ -1,7 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "GladeLookAndFeel.h"
-#include "../Engine/StepSequencer.h"
+#include "../Engine/GladeConstants.h"
 
 /** 8-step position sequencer bar UI.
  *  Click/drag to set each step's value (0-1 = grain position).
@@ -16,7 +16,7 @@ public:
 
     void setStepValues (const float* vals)
     {
-        for (int i = 0; i < StepSequencer::kNumSteps; ++i)
+        for (int i = 0; i < Glade::kSeqNumSteps; ++i)
             stepValues[i] = vals[i];
         repaint();
     }
@@ -33,7 +33,7 @@ public:
     //==========================================================================
     void paint (juce::Graphics& g) override
     {
-        const int n   = StepSequencer::kNumSteps;
+        const int n   = Glade::kSeqNumSteps;
         const float w = (float) getWidth();
         const float h = (float) getHeight();
         const float sw = w / (float) n;   // step width
@@ -86,12 +86,12 @@ public:
     void mouseDrag (const juce::MouseEvent& e) override  { setStepFromMouse (e); }
 
 private:
-    float stepValues[StepSequencer::kNumSteps] = { 0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f };
+    float stepValues[Glade::kSeqNumSteps] = { 0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f,0.5f };
     int   currentStep = -1;
 
     void setStepFromMouse (const juce::MouseEvent& e)
     {
-        const int n  = StepSequencer::kNumSteps;
+        const int n  = Glade::kSeqNumSteps;
         const float sw = (float) getWidth() / (float) n;
         const int idx = juce::jlimit (0, n - 1, (int) ((float) e.x / sw));
         const float val = juce::jlimit (0.f, 1.f,

@@ -5,6 +5,8 @@
 #include "PitchDetector.h"
 #include "EnvelopeFollower.h"
 #include "StepSequencer.h"
+#include "GrainParams.h"
+#include "LFOFunction.h"
 #include <JuceHeader.h>
 
 class GranularEngine
@@ -13,43 +15,47 @@ public:
     GranularEngine() = default;
 
     void prepare (double sampleRate, int maxBlockSize);
-    void releaseResources();   // frees large buffers; call from releaseResources()
+    void releaseResources();
 
+    /** Main audio callback.  Receives a pre-built GrainParams snapshot rather
+     *  than a live APVTS reference — the engine has no knowledge of JUCE's
+     *  parameter system and can be driven from unit tests with plain structs. */
     void process (juce::AudioBuffer<float>& output,
                   juce::MidiBuffer&         midi,
-                  juce::AudioProcessorValueTreeState& apvts,
-                  double bpm);
+                  const GrainParams&        params);
 
     // Load a sample file — call from message thread only.
     bool loadSample (const juce::File& file);
 
-    bool isReady() const { return sampleBuffer.hasContent(); }
-
+    bool isReady()            const { return sampleBuffer.hasContent(); }
     int  getActiveGrainCount() const { return grainPool.getActiveCount(); }
 
-    const juce::AudioBuffer<float>& getSampleBuffer() const { return sampleBuffer.getBuffer(); }
+    const juce::AudioBuffer<float>& getSampleBuffer() const
+    {
+        return sampleBuffer.getBuffer();
+    }
 
     // MIDI note currently held (-1 = none)
-    int  getCurrentMidiNote()    const { return currentMidiNote.load(); }
+    int  getCurrentMidiNote()  const { return currentMidiNote.load(); }
 
     // Detected root note of the loaded sample
-    int  getDetectedRootNote()   const { return detectedRootNote.load(); }
+    int  getDetectedRootNote() const { return detectedRootNote.load(); }
 
     // LFO state for UI visualisation (safe to read from message thread)
-    float getLfoPhase()       const { return lfoPhaseAtomic.load();       }
-    float getLfoOutput()      const { return lfoOutputAtomic.load();      }
-    float getLfoPhase2()      const { return lfoPhase2Atomic.load();      }
-    float getLfoOutput2()     const { return lfoOutput2Atomic.load();     }
-    float getLfoPhase3()      const { return lfoPhase3Atomic.load();      }
-    float getLfoOutput3()     const { return lfoOutput3Atomic.load();     }
-    float getEnvFollowValue() const { return envFollowValueAtomic.load(); }
-    int   getSeqCurrentStep() const { return stepSequencer.getCurrentStep(); }
+    float getLfoPhase()        const { return lfoPhaseAtomic.load();       }
+    float getLfoOutput()       const { return lfoOutputAtomic.load();      }
+    float getLfoPhase2()       const { return lfoPhase2Atomic.load();      }
+    float getLfoOutput2()      const { return lfoOutput2Atomic.load();     }
+    float getLfoPhase3()       const { return lfoPhase3Atomic.load();      }
+    float getLfoOutput3()      const { return lfoOutput3Atomic.load();     }
+    float getEnvFollowValue()  const { return envFollowValueAtomic.load(); }
+    int   getSeqCurrentStep()  const { return stepSequencer.getCurrentStep(); }
 
-    // Final modulated grain position (after all LFO/env/seq modulation)
+    // Final modulated grain position (after all LFO / env / seq modulation)
     float getModulatedPosition() const { return modulatedPositionAtomic.load(); }
 
 private:
-    double sampleRate  = 44100.0;
+    double sampleRate = 44100.0;
 
     SampleBuffer   sampleBuffer;
     GrainPool      grainPool;
@@ -59,9 +65,7 @@ private:
     std::atomic<int>  currentMidiNote    { -1 };
     int               lastActiveMidiNote { 60 };
 
-    // Last-note-priority monophonic note stack.
-    // Populated and consumed only on the audio thread (inside handleMidi),
-    // so no synchronisation is needed.
+    // Last-note-priority monophonic note stack (audio-thread only, no atomics needed)
     static constexpr int kNoteStackSize = 16;
     std::array<int, kNoteStackSize> noteStack {};
     int noteStackSize = 0;
@@ -78,14 +82,14 @@ private:
     juce::Random lfoRandom;
 
     // Exported to UI thread via atomics
-    std::atomic<float> lfoPhaseAtomic           { 0.f };
-    std::atomic<float> lfoOutputAtomic          { 0.f };
-    std::atomic<float> lfoPhase2Atomic          { 0.f };
-    std::atomic<float> lfoOutput2Atomic         { 0.f };
-    std::atomic<float> lfoPhase3Atomic          { 0.f };
-    std::atomic<float> lfoOutput3Atomic         { 0.f };
-    std::atomic<float> envFollowValueAtomic     { 0.f };
-    std::atomic<float> modulatedPositionAtomic  { 0.5f };
+    std::atomic<float> lfoPhaseAtomic          { 0.f };
+    std::atomic<float> lfoOutputAtomic         { 0.f };
+    std::atomic<float> lfoPhase2Atomic         { 0.f };
+    std::atomic<float> lfoOutput2Atomic        { 0.f };
+    std::atomic<float> lfoPhase3Atomic         { 0.f };
+    std::atomic<float> lfoOutput3Atomic        { 0.f };
+    std::atomic<float> envFollowValueAtomic    { 0.f };
+    std::atomic<float> modulatedPositionAtomic { 0.5f };
 
     // Envelope follower
     EnvelopeFollower envFollower;
@@ -93,16 +97,19 @@ private:
     // Step sequencer
     StepSequencer stepSequencer;
 
-    float  calcLFO (float rate, int shape, int numSamples,
-                    double& phase, float& lastSH) noexcept;
+    /** Advance one LFO phase and return the output sample.
+     *  Delegates to LFOFunction::evaluate for the waveform shape so audio and
+     *  UI always compute identical values from the same function. */
+    float calcLFO (float rate, int shape, int numSamples,
+                   double& phase, float& lastSH) noexcept;
 
-    // Dry/wet scratch buffer
+    // Wet-signal scratch buffer; sized to maxBlockSize in prepare()
     juce::AudioBuffer<float> wetBuffer;
 
-    // Smoothed output gain — prevents zipper noise on gain changes
+    // Smoothed output gain — prevents zipper noise on gain automation
     juce::LinearSmoothedValue<float> outputGainSmoothed;
 
-    void handleMidi (juce::MidiBuffer& midi);
+    void   handleMidi (juce::MidiBuffer& midi);
     double midiNoteToPitchRatio (int note) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GranularEngine)
