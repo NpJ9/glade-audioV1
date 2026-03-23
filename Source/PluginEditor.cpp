@@ -55,13 +55,15 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     logoLabel.setColour (juce::Label::textColourId, textPrimary);
     addAndMakeVisible (logoLabel);
 
-    // Preset nav
-    presetNameLabel.setText (presetManager.getCurrentName(),
-                             juce::dontSendNotification);
-    presetNameLabel.setFont (juce::Font (juce::FontOptions{}.withHeight (16.f).withStyle ("Bold")));
-    presetNameLabel.setColour (juce::Label::textColourId, textPrimary);
-    presetNameLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (presetNameLabel);
+    // ── Preset navigation ─────────────────────────────────────────────────────
+    // Restore preset name from the processor (set by setStateInformation on reload)
+    presetManager.setCurrentByName (audioProcessor.currentPresetName);
+
+    presetMenuButton.setButtonText (presetManager.getCurrentName());
+    presetMenuButton.setColour (juce::TextButton::buttonColourId,  panelRaised);
+    presetMenuButton.setColour (juce::TextButton::textColourOffId, textPrimary);
+    presetMenuButton.onClick = [this] { showPresetMenu(); };
+    addAndMakeVisible (presetMenuButton);
 
     for (auto* btn : { &prevPresetButton, &nextPresetButton })
     {
@@ -72,14 +74,12 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     prevPresetButton.onClick = [this]
     {
         presetManager.prevPreset (audioProcessor.apvts);
-        presetNameLabel.setText (presetManager.getCurrentName(),
-                                 juce::dontSendNotification);
+        onPresetChosen (presetManager.getCurrentIndex());
     };
     nextPresetButton.onClick = [this]
     {
         presetManager.nextPreset (audioProcessor.apvts);
-        presetNameLabel.setText (presetManager.getCurrentName(),
-                                 juce::dontSendNotification);
+        onPresetChosen (presetManager.getCurrentIndex());
     };
 
     rndAllButton.setColour (juce::TextButton::buttonColourId,  panelRaised);
@@ -311,12 +311,19 @@ void GladeAudioProcessorEditor::timerCallback()
         stepSeqUI.setCurrentStep (getF ("seqActive") > 0.5f ? state.seqCurrentStep : -1);
     }
 
-    // Update root note label + LFO-modulated position on waveform display
+    // Update root note label + LFO-modulated position on waveform display.
+    // Also handles the case where setStateInformation is called after the editor
+    // is opened (e.g. some DAWs): detect the first moment the sample becomes
+    // available and push the buffer to the display.
     if (state.sampleLoaded)
     {
+        if (!sampleWasLoaded)
+            waveformDisplay.setSampleBuffer (audioProcessor.getSampleBuffer());
+
         waveformDisplay.setRootNote (audioProcessor.getRootNoteName());
         waveformDisplay.setModulatedPosition (state.modulatedPosition);
     }
+    sampleWasLoaded = state.sampleLoaded;
 
     cachedGrainCount = state.activeGrainCount;
     repaint (headerArea); // refresh grain count
@@ -408,7 +415,7 @@ void GladeAudioProcessorEditor::resized()
         nextPresetButton.setBounds (h.removeFromRight (37));
         prevPresetButton.setBounds (h.removeFromRight (37));
         h.removeFromRight (5);
-        presetNameLabel.setBounds  (h);
+        presetMenuButton.setBounds (h);
     }
 
     // ── FX chain (233px) ─────────────────────────────────────────────────────
@@ -633,6 +640,52 @@ void GladeAudioProcessorEditor::paintSection (juce::Graphics& g,
     g.fillRect (juce::Rectangle<float> ((float) bounds.getX() + 12.f,
                                          (float) bounds.getY() + 19.f,
                                          28.f, 1.5f));
+}
+
+//==============================================================================
+void GladeAudioProcessorEditor::onPresetChosen (int /*index*/)
+{
+    presetMenuButton.setButtonText (presetManager.getCurrentName());
+    audioProcessor.currentPresetName = presetManager.getCurrentName();
+}
+
+void GladeAudioProcessorEditor::showPresetMenu()
+{
+    const auto& presets = presetManager.getPresets();
+
+    // Collect unique category order (preserving first-seen order)
+    juce::StringArray categories;
+    for (const auto& p : presets)
+        if (!categories.contains (p.category))
+            categories.add (p.category);
+
+    juce::PopupMenu menu;
+    int itemId = 1;
+
+    for (const auto& cat : categories)
+    {
+        juce::PopupMenu sub;
+        for (int i = 0; i < (int) presets.size(); ++i)
+        {
+            if (presets[i].category == cat)
+            {
+                const bool isCurrent = (i == presetManager.getCurrentIndex());
+                sub.addItem (itemId + i, presets[i].name, true, isCurrent);
+            }
+        }
+        menu.addSubMenu (cat, sub);
+    }
+
+    menu.showMenuAsync (juce::PopupMenu::Options()
+                            .withTargetComponent (presetMenuButton)
+                            .withMinimumWidth (presetMenuButton.getWidth()),
+        [this] (int result)
+        {
+            if (result <= 0) return;
+            const int index = result - 1;   // itemId = index + 1
+            presetManager.loadPreset (index, audioProcessor.apvts);
+            onPresetChosen (index);
+        });
 }
 
 //==============================================================================

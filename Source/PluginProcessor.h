@@ -100,7 +100,8 @@ public:
     // Safe to call from the message thread; reads only the atomic stored in getState().
     juce::String getRootNoteName() const;
 
-    juce::File lastLoadedFile;
+    juce::File   lastLoadedFile;
+    juce::String currentPresetName { "INIT" };
 
     //==========================================================================
     // Exposed for APVTS attachment construction in the editor and for

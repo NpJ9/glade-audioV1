@@ -40,14 +40,18 @@ private:
     PresetManager        presetManager;
     GladeLookAndFeel     laf;
     juce::Random         rng;
-    int                  cachedGrainCount = 0;
+    int                  cachedGrainCount  = 0;
+    bool                 sampleWasLoaded   = false;
 
     //==========================================================================
     // Header
     juce::Label      logoLabel;
-    juce::Label      presetNameLabel;
+    juce::TextButton presetMenuButton;          // shows current name; click → dropdown
     juce::TextButton prevPresetButton { "<" };
     juce::TextButton nextPresetButton { ">" };
+
+    void showPresetMenu();
+    void onPresetChosen (int index);
     juce::TextButton rndAllButton     { "RND ALL" };
     juce::ToggleButton wildButton     { "WILD" };
 

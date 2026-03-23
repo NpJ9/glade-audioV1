@@ -28,7 +28,7 @@ A granular synthesizer + effects VST3/Standalone plugin built with JUCE 7.
 
 ## Build
 
-```powershell
+```powershellaaaaaa
 # Configure
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 

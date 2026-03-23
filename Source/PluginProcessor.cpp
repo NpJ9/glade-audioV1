@@ -360,6 +360,7 @@ void GladeAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
     if (granularEngine.isReady())
         state.setProperty ("samplePath", lastLoadedFile.getFullPathName(), nullptr);
+    state.setProperty ("presetName", currentPresetName, nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -382,6 +383,9 @@ void GladeAudioProcessor::setStateInformation (const void* data, int sizeInBytes
                     lastLoadedFile = f;
                 }
             }
+
+            if (state.hasProperty ("presetName"))
+                currentPresetName = state.getProperty ("presetName").toString();
         }
     }
 }
