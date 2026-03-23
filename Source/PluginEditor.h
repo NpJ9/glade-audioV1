@@ -102,16 +102,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> envActiveAtt;
 
     //==========================================================================
-    // ENGINE 2 section
-    juce::ToggleButton engine2ActiveButton { "ON" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> engine2ActiveAtt;
-
-    GladeKnob  engine2SizeKnob, engine2DensityKnob, engine2PositionKnob, engine2JitterKnob;
-    GladeKnob  engine2PitchKnob, engine2PitchJitterKnob, engine2PanKnob;
-    GladeKnob  engine2GainKnob;
-    GladeCombo engine2WindowCombo;
-
-    //==========================================================================
     // FX Chain — 4 slots (type combo is now inside each FXSlotUI)
     std::array<std::unique_ptr<FXSlotUI>, 4> fxSlots;
 
@@ -121,7 +111,6 @@ private:
     juce::Rectangle<int> waveArea, fractalArea, envArea;
     juce::Rectangle<int> grainArea, pitchArea, outputArea;
     juce::Rectangle<int> windowArea, lfoArea;
-    juce::Rectangle<int> engine2Row, engine2GrainArea, engine2PitchArea, engine2OutputArea;
 
     void layoutKnobRow (juce::Rectangle<int> rowBounds,
                         std::initializer_list<GladeKnob*> knobs);
