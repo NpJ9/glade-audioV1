@@ -45,7 +45,17 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
       envAttackKnob  ("envAttack",  "Atk",    cyan, p.apvts),
       envReleaseKnob ("envRelease", "Rel",    cyan, p.apvts),
       envDepthKnob   ("envDepth",   "Depth",  cyan, p.apvts),
-      envTargetCombo ("envTarget",  "Target", cyan, p.apvts)
+      envTargetCombo ("envTarget",  "Target", cyan, p.apvts),
+
+      engine2SizeKnob      ("grainSize2",    "Size",    cyan,   p.apvts),
+      engine2DensityKnob   ("grainDensity2", "Density", cyan,   p.apvts),
+      engine2PositionKnob  ("grainPosition2","Position",cyan,   p.apvts),
+      engine2JitterKnob    ("posJitter2",    "Jitter",  cyan,   p.apvts),
+      engine2PitchKnob     ("pitchShift2",   "Shift",   green,  p.apvts),
+      engine2PitchJitterKnob("pitchJitter2", "Jitter",  green,  p.apvts),
+      engine2PanKnob       ("panSpread2",    "Pan",     green,  p.apvts),
+      engine2GainKnob      ("outputGain2",   "Gain",    yellow, p.apvts),
+      engine2WindowCombo   ("windowType2",   "Window",  cyan,   p.apvts)
 {
     setLookAndFeel (&laf);
 
@@ -210,6 +220,22 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     addAndMakeVisible (envTargetCombo);
 
 
+    // ── ENGINE 2 ──────────────────────────────────────────────────────────────
+    engine2ActiveButton.setColour (juce::ToggleButton::tickColourId,         cyan);
+    engine2ActiveButton.setColour (juce::ToggleButton::tickDisabledColourId, textDim);
+    engine2ActiveAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        p.apvts, "engine2Active", engine2ActiveButton);
+    addAndMakeVisible (engine2ActiveButton);
+    addAndMakeVisible (engine2SizeKnob);
+    addAndMakeVisible (engine2DensityKnob);
+    addAndMakeVisible (engine2PositionKnob);
+    addAndMakeVisible (engine2JitterKnob);
+    addAndMakeVisible (engine2PitchKnob);
+    addAndMakeVisible (engine2PitchJitterKnob);
+    addAndMakeVisible (engine2PanKnob);
+    addAndMakeVisible (engine2GainKnob);
+    addAndMakeVisible (engine2WindowCombo);
+
     // ── FX Slots (type combo is inside each FXSlotUI) ────────────────────────
     for (int i = 0; i < 4; ++i)
     {
@@ -218,7 +244,7 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
         addAndMakeVisible (*fxSlots[i]);
     }
 
-    setSize (1400, 880);
+    setSize (1400, 1060);
     startTimerHz (30);
 }
 
@@ -426,6 +452,12 @@ void GladeAudioProcessorEditor::resized()
     windowArea = windowLfoRow.removeFromLeft (333);
     lfoArea    = windowLfoRow;
 
+    // ── ENGINE 2 row (180px) ─────────────────────────────────────────────────
+    engine2Row         = bounds.removeFromBottom (180);
+    engine2GrainArea   = engine2Row.removeFromLeft (573);
+    engine2PitchArea   = engine2Row.removeFromLeft (453);
+    engine2OutputArea  = engine2Row;
+
     // ── Middle knob row (253px) ───────────────────────────────────────────────
     midArea    = bounds.removeFromBottom (253);
     grainArea  = midArea.removeFromLeft (573);
@@ -547,6 +579,30 @@ void GladeAudioProcessorEditor::resized()
         layoutKnobRow (envSection, { &envAttackKnob, &envReleaseKnob, &envDepthKnob });
     }
 
+    // ── ENGINE 2 components ───────────────────────────────────────────────────
+    {
+        auto ga = engine2GrainArea.reduced (11, 8);
+        // ON toggle in top-right corner of the grain sub-section
+        engine2ActiveButton.setBounds (ga.getRight() - 52, ga.getY() + 4, 48, 24);
+
+        // Window combo at the bottom, knobs above
+        auto windowRow = ga.removeFromBottom (45);
+        windowRow.removeFromTop (5);
+        engine2WindowCombo.setBounds (windowRow.removeFromLeft (170));
+
+        layoutKnobRow (ga.withTrimmedTop (28),
+                       { &engine2SizeKnob, &engine2DensityKnob,
+                         &engine2PositionKnob, &engine2JitterKnob });
+    }
+    {
+        auto pa = engine2PitchArea.reduced (11, 8);
+        layoutKnobRow (pa.withTrimmedTop (28),
+                       { &engine2PitchKnob, &engine2PitchJitterKnob, &engine2PanKnob });
+    }
+    {
+        layoutKnobRow (engine2OutputArea.reduced (16, 37), { &engine2GainKnob });
+    }
+
     // ── FX chain strip ────────────────────────────────────────────────────────
     {
         auto strip = bottomArea.reduced (11, 8);
@@ -589,8 +645,11 @@ void GladeAudioProcessorEditor::paint (juce::Graphics& g)
     paintSection (g, grainArea,   "GRAIN",       cyan);
     paintSection (g, pitchArea,   "PITCH",       green);
     paintSection (g, outputArea,  "OUTPUT",      yellow);
-    paintSection (g, windowArea,  "WINDOW",      cyan);
-    paintSection (g, lfoArea,     "LFO  /  ENV FOLLOW", magenta);
+    paintSection (g, windowArea,      "WINDOW",           cyan);
+    paintSection (g, lfoArea,         "LFO  /  ENV FOLLOW", magenta);
+    paintSection (g, engine2GrainArea, "ENGINE 2  —  GRAIN", cyan);
+    paintSection (g, engine2PitchArea, "PITCH",             green);
+    paintSection (g, engine2OutputArea,"OUTPUT",            yellow);
 
     // FX chain area
     g.setColour (panel);

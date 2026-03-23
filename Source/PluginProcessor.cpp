@@ -132,6 +132,29 @@ GladeAudioProcessor::createParameterLayout()
         "envTarget",    "Env Follow Target",
         juce::StringArray{"None","Grain Size","Density","Position","Pitch Shift","Pan Spread"}, 0));
 
+    // ── Granular Engine 2 ────────────────────────────────────────────────────
+    params.push_back (std::make_unique<juce::AudioParameterBool>  (
+        "engine2Active",  "Engine 2 Active",   false));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "grainSize2",    "E2 Grain Size",    juce::NormalisableRange<float>(5.f, 500.f, 0.1f, 0.4f), 80.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "grainDensity2", "E2 Grain Density", juce::NormalisableRange<float>(1.f, 200.f, 0.1f, 0.5f), 30.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "grainPosition2","E2 Grain Position",juce::NormalisableRange<float>(0.f, 1.f),  0.5f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "posJitter2",    "E2 Pos Jitter",    juce::NormalisableRange<float>(0.f, 1.f),  0.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "pitchShift2",   "E2 Pitch Shift",   juce::NormalisableRange<float>(-24.f, 24.f, 0.01f), 0.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "pitchJitter2",  "E2 Pitch Jitter",  juce::NormalisableRange<float>(0.f, 1.f), 0.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "panSpread2",    "E2 Pan Spread",    juce::NormalisableRange<float>(0.f, 1.f), 0.f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "outputGain2",   "E2 Output Gain",   juce::NormalisableRange<float>(-24.f, 12.f, 0.1f), 0.f));
+    params.push_back (std::make_unique<juce::AudioParameterChoice>(
+        "windowType2",   "E2 Window Type",
+        juce::StringArray{"Gaussian","Hanning","Trapezoid","Rectangular"}, 0));
+
     // ── FX Chain slots (4 slots, each has type + 4 params + bypass) ──────────
     juce::StringArray fxTypes {"None","Reverb","Delay","Chorus","Distortion","Filter","Shimmer","L.Chorus"};
     for (int i = 0; i < 4; ++i)
@@ -157,9 +180,11 @@ GladeAudioProcessor::createParameterLayout()
 //==============================================================================
 void GladeAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    granularEngine.prepare (sampleRate, samplesPerBlock);
+    granularEngine.prepare  (sampleRate, samplesPerBlock);
+    granularEngine2.prepare (sampleRate, samplesPerBlock);
     fxChain->prepare (sampleRate, samplesPerBlock);
-    dryBuffer.setSize (2, samplesPerBlock);
+    dryBuffer.setSize    (2, samplesPerBlock);
+    engine2Buffer.setSize (2, samplesPerBlock);
 
     dryWetSmoothed.reset (sampleRate, 0.05);
     dryWetSmoothed.setCurrentAndTargetValue (apvts.getRawParameterValue ("dryWet")->load());
@@ -168,8 +193,10 @@ void GladeAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 void GladeAudioProcessor::releaseResources()
 {
     granularEngine.releaseResources();
+    granularEngine2.releaseResources();
     fxChain->reset();
-    dryBuffer.setSize (0, 0);
+    dryBuffer.setSize    (0, 0);
+    engine2Buffer.setSize (0, 0);
 }
 
 //==============================================================================
@@ -243,6 +270,45 @@ GrainParams GladeAudioProcessor::buildGrainParams() const
     return p;
 }
 
+GrainParams GladeAudioProcessor::buildGrainParams2() const
+{
+    auto getF = [this] (const char* id) -> float
+    {
+        return apvts.getRawParameterValue (id)->load();
+    };
+
+    GrainParams p;
+
+    // Share the ADSR from engine 1 — both respond to MIDI with the same envelope
+    p.attack   = getF ("attack");
+    p.decay    = getF ("decay");
+    p.sustain  = getF ("sustain");
+    p.release  = getF ("release");
+
+    // Engine 2 grain parameters
+    p.grainSizeMs = getF ("grainSize2");
+    p.density     = getF ("grainDensity2");
+    p.position    = getF ("grainPosition2");
+    p.posJitter   = getF ("posJitter2");
+    p.pitchShift  = getF ("pitchShift2");
+    p.pitchJitter = getF ("pitchJitter2");
+    p.panSpread   = getF ("panSpread2");
+    p.windowType  = (int) getF ("windowType2");
+    p.outputGainDb = getF ("outputGain2");
+
+    // No LFO, sequencer, or envelope follower for engine 2 in this iteration
+    p.lfoDepth  = 0.f;
+    p.lfoDepth2 = 0.f;
+    p.lfoDepth3 = 0.f;
+    p.seqActive = false;
+    p.beatSync  = false;
+    p.envActive = false;
+
+    p.bpm = currentBpm;
+
+    return p;
+}
+
 std::array<FXSlotParams, FXChain::numSlots>
 GladeAudioProcessor::buildFXParams() const
 {
@@ -288,8 +354,25 @@ void GladeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const GrainParams grainParams = buildGrainParams();
     const auto        fxParams    = buildFXParams();
 
-    // ── Run granular engine ───────────────────────────────────────────────────
+    // ── Run granular engine 1 ─────────────────────────────────────────────────
     granularEngine.process (buffer, midiMessages, grainParams);
+
+    // ── Run granular engine 2 (if active) and mix into buffer ─────────────────
+    if (apvts.getRawParameterValue ("engine2Active")->load() > 0.5f
+        && granularEngine2.isReady())
+    {
+        const int numSamples  = buffer.getNumSamples();
+        const int numChannels = buffer.getNumChannels();
+        if (engine2Buffer.getNumSamples() < numSamples || engine2Buffer.getNumChannels() < numChannels)
+            engine2Buffer.setSize (numChannels, numSamples, false, true, true);
+        engine2Buffer.clear();
+
+        const GrainParams grainParams2 = buildGrainParams2();
+        granularEngine2.process (engine2Buffer, midiMessages, grainParams2);
+
+        for (int ch = 0; ch < numChannels; ++ch)
+            buffer.addFrom (ch, 0, engine2Buffer, ch % engine2Buffer.getNumChannels(), 0, numSamples);
+    }
 
     // ── Output RMS for visualizer ─────────────────────────────────────────────
     float rmsSum = 0.f;
@@ -345,7 +428,11 @@ PluginState GladeAudioProcessor::getState() const noexcept
 bool GladeAudioProcessor::loadSample (const juce::File& file)
 {
     const bool ok = granularEngine.loadSample (file);
-    if (ok) lastLoadedFile = file;
+    if (ok)
+    {
+        lastLoadedFile = file;
+        granularEngine2.loadSample (file);   // keep engine 2 in sync with the same sample
+    }
     return ok;
 }
 
@@ -380,6 +467,7 @@ void GladeAudioProcessor::setStateInformation (const void* data, int sizeInBytes
                 if (f.existsAsFile())
                 {
                     granularEngine.loadSample (f);
+                    granularEngine2.loadSample (f);
                     lastLoadedFile = f;
                 }
             }

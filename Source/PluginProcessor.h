@@ -107,11 +107,15 @@ public:
     // Exposed for APVTS attachment construction in the editor and for
     // preset manager operations.  Not intended for audio-thread use.
     GranularEngine granularEngine;
+    GranularEngine granularEngine2;  // second parallel engine — reads the same sample
     std::unique_ptr<FXChain> fxChain;
 
 private:
     // Pre-allocated dry buffer for dry/wet blending (no audio-thread alloc)
     juce::AudioBuffer<float> dryBuffer;
+
+    // Scratch buffer for engine 2 output (mixed into buffer before FX)
+    juce::AudioBuffer<float> engine2Buffer;
 
     // Smoothed dry/wet — prevents zipper noise when dryWet is automated
     juce::LinearSmoothedValue<float> dryWetSmoothed;
@@ -124,6 +128,10 @@ private:
 
     /** Read all FX slot parameters from APVTS into a flat array. */
     std::array<FXSlotParams, FXChain::numSlots> buildFXParams() const;
+
+    /** Build GrainParams for engine 2 from APVTS.  Shares ADSR with engine 1
+     *  so both engines respond to the same MIDI note with the same envelope. */
+    GrainParams buildGrainParams2() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GladeAudioProcessor)
 };
