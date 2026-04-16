@@ -61,10 +61,10 @@ void GladeKnob::paint (juce::Graphics& g)
 
 void GladeKnob::sliderValueChanged (juce::Slider*) { repaint(); }
 
-void GladeKnob::setLfoOverlay (float output, float depth)
+void GladeKnob::setLfoOverlay (int lfoIndex, float output, float depth, juce::Colour colour)
 {
-    lfoModOutput = output;
-    lfoModDepth  = depth;
+    if (lfoIndex < 0 || lfoIndex > 2) return;
+    lfoRings[lfoIndex] = { output, depth, colour };
 }
 
 void GladeKnob::setEnvOverlay (float value, float depth)
@@ -75,7 +75,10 @@ void GladeKnob::setEnvOverlay (float value, float depth)
 
 void GladeKnob::paintOverChildren (juce::Graphics& g)
 {
-    if (lfoModDepth < 0.001f && envModDepth < 0.001f) return;
+    const bool anyLfo = lfoRings[0].depth > 0.001f
+                     || lfoRings[1].depth > 0.001f
+                     || lfoRings[2].depth > 0.001f;
+    if (!anyLfo && envModDepth < 0.001f) return;
 
     // Slider occupies top (height - labelH) pixels
     const int    labelH = 34;
@@ -83,64 +86,84 @@ void GladeKnob::paintOverChildren (juce::Graphics& g)
     const float  cx     = sb.getCentreX();
     const float  cy     = sb.getCentreY();
     const float  outerR = juce::jmin (sb.getWidth(), sb.getHeight()) * 0.5f - 3.f;
-    const float  ringR  = outerR + 3.5f;   // draw just outside the knob body
 
     // Rotary angle range
-    const auto  rp       = slider.getRotaryParameters();
-    const float startA   = rp.startAngleRadians;
-    const float endA     = rp.endAngleRadians;
-    const float arcSpan  = endA - startA;
+    const auto  rp          = slider.getRotaryParameters();
+    const float startA      = rp.startAngleRadians;
+    const float endA        = rp.endAngleRadians;
+    const float arcSpan     = endA - startA;
 
     // Knob's current normalised value → centre angle of the mod arc
     const float norm        = (float) ((slider.getValue() - slider.getMinimum())
                                        / (slider.getMaximum() - slider.getMinimum()));
     const float centerAngle = startA + norm * arcSpan;
 
-    // ── LFO ring (magenta) ────────────────────────────────────────────────────
-    if (lfoModDepth > 0.001f)
+    // ── LFO rings — staggered radii so all three are simultaneously visible ────
+    // Ring spacing: 4 px between centres; stroke widths taper inward.
+    static constexpr float kBaseOffset  = 3.5f;   // gap between knob body and innermost ring
+    static constexpr float kRingStep    = 4.5f;   // radial step per LFO index
+    static constexpr float kStrokeW[3] = { 2.5f, 2.0f, 2.0f };
+
+    for (int li = 0; li < 3; ++li)
     {
-        const float halfSpan = arcSpan * lfoModDepth * 0.35f;
+        const auto& ring = lfoRings[li];
+        if (ring.depth < 0.001f) continue;
+
+        const float ringR    = outerR + kBaseOffset + (float) li * kRingStep;
+        // Clamp so arc stays within [startA, endA] — prevents wrapping artefacts
+        const float rawHalf  = arcSpan * ring.depth * 0.35f;
+        const float halfSpan = juce::jmin (rawHalf,
+                                           juce::jmin (centerAngle - startA,
+                                                        endA - centerAngle));
+        if (halfSpan <= 0.f) continue;
 
         juce::Path rangeArc;
         rangeArc.addCentredArc (cx, cy, ringR, ringR, 0.f,
                                 centerAngle - halfSpan,
                                 centerAngle + halfSpan, true);
-        g.setColour (GladeColors::magenta.withAlpha (0.30f));
-        g.strokePath (rangeArc, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved,
+        g.setColour (ring.colour.withAlpha (0.28f));
+        g.strokePath (rangeArc, juce::PathStrokeType (kStrokeW[li],
+                                                       juce::PathStrokeType::curved,
                                                        juce::PathStrokeType::rounded));
 
-        const float dotAngle = centerAngle + lfoModOutput * halfSpan;
+        const float dotAngle = centerAngle + juce::jlimit (-1.f, 1.f, ring.output) * halfSpan;
         const float dotX = cx + ringR * std::sin (dotAngle);
         const float dotY = cy - ringR * std::cos (dotAngle);
-        g.setColour (GladeColors::magenta.withAlpha (0.5f));
-        g.fillEllipse (dotX - 5.f, dotY - 5.f, 10.f, 10.f);
-        g.setColour (GladeColors::magenta);
-        g.fillEllipse (dotX - 3.f, dotY - 3.f, 6.f, 6.f);
+        g.setColour (ring.colour.withAlpha (0.5f));
+        g.fillEllipse (dotX - 4.5f, dotY - 4.5f, 9.f, 9.f);
+        g.setColour (ring.colour);
+        g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.f, 5.f);
     }
 
-    // ── Env follower ring (cyan) — slightly larger radius to avoid overlap ────
+    // ── Env follower ring (cyan) — outermost ring ─────────────────────────────
     if (envModDepth > 0.001f)
     {
-        const float envRingR  = ringR + 5.f;
-        const float halfSpan  = arcSpan * envModDepth * 0.35f;
-        // env value is 0-1; map to -1..1 so 0.5 is neutral
-        const float envNorm   = envModValue * 2.f - 1.f;
+        const float envRingR  = outerR + kBaseOffset + 3.f * kRingStep;   // one step past LFO3
+        const float rawHalf   = arcSpan * envModDepth * 0.35f;
+        const float halfSpan  = juce::jmin (rawHalf,
+                                            juce::jmin (centerAngle - startA,
+                                                         endA - centerAngle));
+        if (halfSpan > 0.f)
+        {
+            // env value is 0-1; map to -1..1 so 0.5 is neutral
+            const float envNorm = juce::jlimit (-1.f, 1.f, envModValue * 2.f - 1.f);
 
-        juce::Path rangeArc;
-        rangeArc.addCentredArc (cx, cy, envRingR, envRingR, 0.f,
-                                centerAngle - halfSpan,
-                                centerAngle + halfSpan, true);
-        g.setColour (GladeColors::cyan.withAlpha (0.25f));
-        g.strokePath (rangeArc, juce::PathStrokeType (2.f, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
+            juce::Path rangeArc;
+            rangeArc.addCentredArc (cx, cy, envRingR, envRingR, 0.f,
+                                    centerAngle - halfSpan,
+                                    centerAngle + halfSpan, true);
+            g.setColour (GladeColors::cyan.withAlpha (0.22f));
+            g.strokePath (rangeArc, juce::PathStrokeType (2.f, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
 
-        const float dotAngle = centerAngle + envNorm * halfSpan;
-        const float dotX = cx + envRingR * std::sin (dotAngle);
-        const float dotY = cy - envRingR * std::cos (dotAngle);
-        g.setColour (GladeColors::cyan.withAlpha (0.5f));
-        g.fillEllipse (dotX - 4.f, dotY - 4.f, 8.f, 8.f);
-        g.setColour (GladeColors::cyan);
-        g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.f, 5.f);
+            const float dotAngle = centerAngle + envNorm * halfSpan;
+            const float dotX = cx + envRingR * std::sin (dotAngle);
+            const float dotY = cy - envRingR * std::cos (dotAngle);
+            g.setColour (GladeColors::cyan.withAlpha (0.5f));
+            g.fillEllipse (dotX - 4.f, dotY - 4.f, 8.f, 8.f);
+            g.setColour (GladeColors::cyan);
+            g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.f, 5.f);
+        }
     }
 }
 

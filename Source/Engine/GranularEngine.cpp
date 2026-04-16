@@ -6,7 +6,8 @@ void GranularEngine::prepare (double sr, int maxBlockSize)
     sampleRate = sr;
     grainPool.reset();
     scheduler.reset();
-    wetBuffer.setSize (2, maxBlockSize);
+    stepSequencer.reset();   // fix: was missing — first block always skipped step 0
+    wetBuffer.setSize (2, maxBlockSize, false, true, false);  // pre-alloc to max; no audio-thread realloc
     adsr.setSampleRate (sr);
 
     // 50ms ramp eliminates zipper noise on output gain automation
@@ -25,12 +26,18 @@ void GranularEngine::releaseResources()
 
 bool GranularEngine::loadSample (const juce::File& file)
 {
-    grainPool.reset();
-    scheduler.reset();
+    // Load first so the atomic buffer flip happens before the reset flag is raised.
+    // The audio thread may read the new buffer for one block before resetting the
+    // grain pool, but all positions are clamped to buffer bounds so there is no crash.
     const bool ok = sampleBuffer.loadFile (file, sampleRate);
 
     if (ok)
     {
+        // Signal the audio thread to reset pool/scheduler/sequencer safely.
+        // We must NOT call grainPool.reset() here — that struct is owned by the
+        // audio thread and iterating it concurrently is a data race.
+        resetRequested.store (true, std::memory_order_release);
+
         const int detected = PitchDetector::detectMidiNote (sampleBuffer.getBuffer(), sampleRate);
         detectedRootNote.store (detected >= 0 ? detected : 60);
     }
@@ -60,7 +67,10 @@ void GranularEngine::handleMidi (juce::MidiBuffer& midi)
             if (noteStackSize < kNoteStackSize)
                 noteStack[noteStackSize++] = note;
             currentMidiNote.store (note);
+            lastVelocity = juce::jlimit (0.f, 1.f, msg.getVelocity() / 127.f);
             adsr.noteOn();
+            adsrVizNoteOn  = true;
+            adsrVizNoteOff = false;
         }
         else if (msg.isNoteOff())
         {
@@ -70,13 +80,20 @@ void GranularEngine::handleMidi (juce::MidiBuffer& midi)
             if (noteStackSize > 0)
                 currentMidiNote.store (noteStack[noteStackSize - 1]);
             else
-            { currentMidiNote.store (-1); adsr.noteOff(); }
+            {
+                currentMidiNote.store (-1);
+                adsr.noteOff();
+                if (!adsrVizNoteOn)   // don't overwrite a simultaneous noteOn flag
+                    adsrVizNoteOff = true;
+            }
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff())
         {
             noteStackSize = 0;
             currentMidiNote.store (-1);
             adsr.noteOff();
+            if (!adsrVizNoteOn)
+                adsrVizNoteOff = true;
         }
     }
 }
@@ -91,12 +108,26 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
                                juce::MidiBuffer&         midi,
                                const GrainParams&        p)
 {
+    // Drain any pending pool reset requested by loadSample() on the message thread.
+    // Doing the reset here (audio thread) eliminates the data race on grainPool.
+    if (resetRequested.load (std::memory_order_acquire))
+    {
+        grainPool.reset();
+        scheduler.reset();
+        stepSequencer.reset();
+        resetRequested.store (false, std::memory_order_release);
+    }
+
     handleMidi (midi);
 
     const int numSamples = output.getNumSamples();
 
     // ── Update ADSR parameters ────────────────────────────────────────────────
     {
+        // Standard ADSR: decay is the rate knob (time to decay from peak to 0).
+        // Audible decay time = decay * (1 - sustain) — lower sustain gives more
+        // noticeable decay.  This matches hardware synth (Moog, etc.) behaviour
+        // and keeps the visualisation and audio in sync.
         juce::ADSR::Parameters ap;
         ap.attack  = p.attack;
         ap.decay   = p.decay;
@@ -116,22 +147,67 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
         return;
     }
 
-    // ── LFO 1/2/3 — compute and sum modulation onto shared targets ───────────
-    // LFO 1: apply BPM sync when enabled.
-    // syncMults maps lfoSyncDiv index to note duration in beats
-    // {"1/32","1/16","1/8","1/4","1/2","1 bar","2 bars","4 bars"}
-    // LFO rate (Hz) = bpm/60 / beats_per_cycle
-    float lfoRate1 = p.lfoRate;
-    if (p.lfoSync && p.bpm > 0.0)
+    // ── ADSR visualisation cursor ─────────────────────────────────────────────
+    // Consume flags set by handleMidi and advance the state machine.
     {
-        static constexpr double syncMults[] = { 0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0 };
-        const int syncDiv = juce::jlimit (0, 7, p.lfoSyncDiv);
-        lfoRate1 = (float) (p.bpm / 60.0 / syncMults[syncDiv]);
+        if (adsrVizNoteOn)
+        {
+            adsrVizStage   = AdsrVizStage::Attack;
+            adsrVizTimeSec = 0.0;
+            adsrVizNoteOn  = false;
+            adsrVizNoteOff = false;
+        }
+        else if (adsrVizNoteOff)
+        {
+            adsrVizStage   = AdsrVizStage::Release;
+            adsrVizTimeSec = 0.0;
+            adsrVizNoteOff = false;
+        }
+
+        const double blockSec = (double) numSamples / sampleRate;
+        float cursor = -1.f;
+
+        switch (adsrVizStage)
+        {
+            case AdsrVizStage::Idle:
+                cursor = -1.f;
+                break;
+            case AdsrVizStage::Attack:
+                adsrVizTimeSec += blockSec;
+                if (adsrVizTimeSec >= (double) p.attack)
+                    { adsrVizStage = AdsrVizStage::Decay; adsrVizTimeSec = 0.0; cursor = 0.25f; }
+                else
+                    cursor = 0.25f * (float) (adsrVizTimeSec / juce::jmax (0.001, (double) p.attack));
+                break;
+            case AdsrVizStage::Decay:
+                adsrVizTimeSec += blockSec;
+                if (adsrVizTimeSec >= (double) p.decay)
+                    { adsrVizStage = AdsrVizStage::Sustain; adsrVizTimeSec = 0.0; cursor = 0.5f; }
+                else
+                    cursor = 0.25f + 0.25f * (float) (adsrVizTimeSec / juce::jmax (0.001, (double) p.decay));
+                break;
+            case AdsrVizStage::Sustain:
+                cursor = 0.5f;
+                break;
+            case AdsrVizStage::Release:
+                adsrVizTimeSec += blockSec;
+                if (adsrVizTimeSec >= (double) p.release)
+                    { adsrVizStage = AdsrVizStage::Idle; adsrVizTimeSec = 0.0; cursor = -1.f; }
+                else
+                    cursor = 0.75f + 0.25f * (float) (adsrVizTimeSec / juce::jmax (0.001, (double) p.release));
+                break;
+        }
+        adsrCursorAtomic.store (cursor, std::memory_order_release);
     }
 
-    const float lfoRaw1 = calcLFO (lfoRate1,   p.lfoShape,  numSamples, lfoPhase,  lfoSH1);
-    const float lfoRaw2 = calcLFO (p.lfoRate2, p.lfoShape2, numSamples, lfoPhase2, lfoSH2);
-    const float lfoRaw3 = calcLFO (p.lfoRate3, p.lfoShape3, numSamples, lfoPhase3, lfoSH3);
+    // ── LFO 1/2/3 — compute and sum modulation onto shared targets ───────────
+    const float lfoRate1 = p.lfoRate;
+    const float lfoRate2 = p.lfoRate2;
+    const float lfoRate3 = p.lfoRate3;
+
+    const float lfoRaw1 = calcLFO (lfoRate1, p.lfoShape,  numSamples, lfoPhase,  lfoSH1);
+    const float lfoRaw2 = calcLFO (lfoRate2, p.lfoShape2, numSamples, lfoPhase2, lfoSH2);
+    const float lfoRaw3 = calcLFO (lfoRate3, p.lfoShape3, numSamples, lfoPhase3, lfoSH3);
 
     lfoPhaseAtomic.store  ((float) lfoPhase);   lfoOutputAtomic.store  (lfoRaw1);
     lfoPhase2Atomic.store ((float) lfoPhase2);  lfoOutput2Atomic.store (lfoRaw2);
@@ -164,29 +240,38 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
     applyLFO (p.lfoTarget2, lfoVal2);
     applyLFO (p.lfoTarget3, lfoVal3);
 
-    // ── Envelope follower modulation ──────────────────────────────────────────
-    if (p.envActive && p.envTarget > 0 && p.envDepth > 0.001f)
-    {
-        const float envVal = (envFollower.getValue() * 2.f - 1.f) * p.envDepth;
-        switch (p.envTarget)
-        {
-            case 1: grainSizeMs = juce::jlimit (5.f,   500.f, grainSizeMs + envVal * 200.f); break;
-            case 2: density     = juce::jlimit (1.f,   200.f, density     + envVal * 80.f);  break;
-            case 3: position    = juce::jlimit (0.f,   1.f,   position    + envVal * 0.5f);  break;
-            case 4: pitchShift  = juce::jlimit (-24.f, 24.f,  pitchShift  + envVal * 12.f);  break;
-            case 5: panSpread   = juce::jlimit (0.f,   1.f,   panSpread   + envVal * 0.5f);  break;
-            default: break;
-        }
-    }
+    // ── Macro knobs M1–M4: additive modulation on their assigned targets ───────
+    // Each macro value 0–1 maps to output −1..+1, identical scale to LFO output.
+    // Default knob value 0.5 → output 0 (no effect).
+    applyLFO (p.m1Target, (p.m1 - 0.5f) * 2.f);
+    applyLFO (p.m2Target, (p.m2 - 0.5f) * 2.f);
+    applyLFO (p.m3Target, (p.m3 - 0.5f) * 2.f);
+    applyLFO (p.m4Target, (p.m4 - 0.5f) * 2.f);
 
-    // ── Step sequencer: overrides position when active ────────────────────────
-    if (p.seqActive)
+    // ── Grain freeze: lock position when active ───────────────────────────────
+    // On the rising edge (off → on), snapshot the current modulated position.
+    // While frozen, skip sequencer and LFO position changes (already applied
+    // above, so override here with the snapshot).
+    if (p.freeze && !prevFreeze)
+        frozenPosition = position;
+    if (p.freeze)
+        position = frozenPosition;
+    prevFreeze = p.freeze;
+
+    // ── Step sequencer: overrides position when active (skip if frozen) ───────
+    if (p.seqActive && !p.freeze)
     {
         const int   divIdx = juce::jlimit (0, 8, p.beatDivision);
         const float seqPos = stepSequencer.process (p.seqSteps, numSamples,
                                                      sampleRate, p.bpm, divIdx, true);
         if (seqPos >= 0.f)
             position = seqPos;
+    }
+    else if (!p.seqActive)
+    {
+        // Still need to tick the sequencer so it stays in sync even when inactive
+        stepSequencer.process (p.seqSteps, numSamples, sampleRate, p.bpm,
+                               juce::jlimit (0, 8, p.beatDivision), false);
     }
 
     // ── Publish final modulated position for waveform display ─────────────────
@@ -204,11 +289,30 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
 
     const WindowType windowType = static_cast<WindowType> (juce::jlimit (0, 3, p.windowType));
 
-    // ── Pitch ratio ───────────────────────────────────────────────────────────
+    // ── Pitch ratio with portamento / glide ───────────────────────────────────
     if (midiNote >= 0) lastActiveMidiNote = midiNote;
 
-    const double pitchRatio = midiNoteToPitchRatio (lastActiveMidiNote)
+    const double targetMidiRatio = midiNoteToPitchRatio (lastActiveMidiNote);
+
+    // Exponential smoothing toward target MIDI pitch ratio.
+    // coeff → 0 when glideTime → 0 (instant snap), → 1 for very long glide.
+    if (p.glideTime < 0.001f)
+    {
+        glidePitchRatio = targetMidiRatio;
+    }
+    else
+    {
+        const double blocksPerSec = sampleRate / (double) numSamples;
+        const double coeff = std::exp (-1.0 / (p.glideTime * blocksPerSec));
+        glidePitchRatio = targetMidiRatio + coeff * (glidePitchRatio - targetMidiRatio);
+    }
+
+    const double pitchRatio = glidePitchRatio
                             * std::pow (2.0, (double) pitchShift / 12.0);
+
+    // ── Velocity scale: blend between full-amplitude and velocity-proportional ─
+    // velocityDepth 0 = always full amplitude; 1 = amplitude equals MIDI velocity.
+    const float velocityScale = 1.f - p.velocityDepth + p.velocityDepth * lastVelocity;
 
     // ── Scheduler ────────────────────────────────────────────────────────────
     const auto& source = sampleBuffer.getBuffer();
@@ -218,11 +322,12 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
                        grainSizeMs, density, position, p.posJitter,
                        pitchRatio, p.pitchJitter, panSpread,
                        windowType, true,
-                       p.pitchScale, p.pitchRoot);
+                       p.pitchScale, p.pitchRoot,
+                       p.reverseAmount, velocityScale);
 
     // ── Process pool into wet buffer ──────────────────────────────────────────
-    if (numSamples > wetBuffer.getNumSamples())
-        wetBuffer.setSize (2, numSamples, false, true, true);
+    // wetBuffer is pre-allocated to maxBlockSize in prepare(); no allocation here.
+    jassert (numSamples <= wetBuffer.getNumSamples());
     wetBuffer.clear();
     grainPool.process (wetBuffer, source);
 
@@ -234,19 +339,6 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
         auto* data = wetBuffer.getWritePointer (ch);
         for (int s = 0; s < numSamples; ++s)
             data[s] = juce::jlimit (-4.f, 4.f, data[s]);
-    }
-
-    // ── Envelope follower update ──────────────────────────────────────────────
-    {
-        float rmsSum = 0.f;
-        for (int ch = 0; ch < wetBuffer.getNumChannels(); ++ch)
-            rmsSum += wetBuffer.getRMSLevel (ch, 0, numSamples);
-        const float wetRms = rmsSum / (float) juce::jmax (1, wetBuffer.getNumChannels());
-
-        const float attCoeff = EnvelopeFollower::makeCoeff (p.envAttack,  sampleRate, numSamples);
-        const float relCoeff = EnvelopeFollower::makeCoeff (p.envRelease, sampleRate, numSamples);
-        envFollower.process (wetRms, attCoeff, relCoeff);
-        envFollowValueAtomic.store (envFollower.getValue());
     }
 
     // ── ADSR envelope ─────────────────────────────────────────────────────────

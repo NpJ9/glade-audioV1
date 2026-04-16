@@ -308,9 +308,10 @@ void ShimmerEffect::prepare (double sr, int maxBlock)
     shimReadPos0   = 0.f;
     shimReadPos1   = (float) pitchBufSize * 0.5f;
 
-    // Dry save-buffer: pre-sized to avoid per-block allocation
-    shimDryL.assign ((size_t) maxBlock, 0.f);
-    shimDryR.assign ((size_t) maxBlock, 0.f);
+    // Dry save-buffer: pre-sized to maxBlock so the audio thread never reallocates.
+    // Use resize (not assign) to retain capacity without re-zeroing on repeat calls.
+    shimDryL.resize ((size_t) maxBlock, 0.f);
+    shimDryR.resize ((size_t) maxBlock, 0.f);
 }
 
 void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
@@ -325,11 +326,13 @@ void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
     const int   pitchBufSz  = (int) shimPitchBufL.size();
     if (pitchBufSz < 4) return;
 
-    // Guard: non-conformant host may send a block larger than maxBlock
+    // Guard: if a non-conformant host sends more samples than maxBlock, grow the
+    // dry-save buffer here (message-thread resize already happened in prepare();
+    // this is a safety fallback — allocating on audio thread is last resort).
     if (numSamples > (int) shimDryL.size())
     {
-        shimDryL.assign ((size_t) numSamples, 0.f);
-        shimDryR.assign ((size_t) numSamples, 0.f);
+        shimDryL.resize ((size_t) numSamples, 0.f);
+        shimDryR.resize ((size_t) numSamples, 0.f);
     }
 
     // Step 0: save dry signal — the mix blend is done manually after reverb so
@@ -382,6 +385,33 @@ void ShimmerEffect::process (juce::AudioBuffer<float>& buffer,
     juce::dsp::AudioBlock<float>              block (buffer);
     juce::dsp::ProcessContextReplacing<float> ctx   (block);
     shimReverb.process (ctx);
+
+    // NaN/Inf guard: JUCE's reverb can enter a bad state with extreme room sizes
+    // or loud transients.  Detect corruption, reset everything, and restore dry.
+    {
+        bool bad = false;
+        for (int s = 0; s < numSamples && !bad; ++s)
+        {
+            if (!std::isfinite (buffer.getSample (0, s))) bad = true;
+            if (hasStereo && !std::isfinite (buffer.getSample (1, s))) bad = true;
+        }
+        if (bad)
+        {
+            shimReverb.reset();
+            std::fill (shimPitchBufL.begin(), shimPitchBufL.end(), 0.f);
+            std::fill (shimPitchBufR.begin(), shimPitchBufR.end(), 0.f);
+            shimPitchWrite = 0;
+            shimReadPos0   = 0.f;
+            shimReadPos1   = (float) shimPitchBufL.size() * 0.5f;
+            // Output dry signal — the reverb trail is lost but audio continues
+            for (int s = 0; s < numSamples; ++s)
+            {
+                buffer.setSample (0, s, shimDryL[s]);
+                if (hasStereo) buffer.setSample (1, s, shimDryR[s]);
+            }
+            return;
+        }
+    }
 
     // Step 3: write reverb output to pitch buffer — hard-clamped to ±2 to
     // prevent NaN/Inf from escaping into the feedback loop on very loud input.
@@ -509,12 +539,327 @@ void LushChorusEffect::reset()
 }
 
 //==============================================================================
+// FlangerEffect
+//==============================================================================
+// p1 = Rate    (0–1 → 0.05–5 Hz)
+// p2 = Depth   (0–1 → delay mod depth 0–7ms around 1ms centre)
+// p3 = Feedback (-0.9..0.9, mapped from 0–1 → -0.9..0.9)
+// Classic single-delay comb flanger with quadrature LFOs for stereo spread.
+
+void FlangerEffect::prepare (double sr, int maxBlock)
+{
+    sampleRate = sr;
+    std::fill (std::begin (bufL), std::end (bufL), 0.f);
+    std::fill (std::begin (bufR), std::end (bufR), 0.f);
+    writePos   = 0;
+    lfoPhaseL  = 0.f;
+    lfoPhaseR  = 0.5f;
+    juce::ignoreUnused (maxBlock);
+}
+
+void FlangerEffect::process (juce::AudioBuffer<float>& buffer,
+                              const FXSlotParams& params, double)
+{
+    const int   numSamples = buffer.getNumSamples();
+    const bool  hasStereo  = buffer.getNumChannels() > 1;
+
+    const float rate       = params.p1 * 4.95f + 0.05f;           // 0.05–5 Hz
+    const float depth      = params.p2 * 7.f;                      // 0–7 ms mod depth
+    const float feedback   = (params.p3 * 2.f - 1.f) * 0.88f;    // -0.88..+0.88
+    const float mix        = params.mix;
+    const float lfoInc     = rate / (float) sampleRate;
+
+    const float centreMs   = 1.f;   // centre delay in ms
+    const float centreSmpl = centreMs * (float) sampleRate / 1000.f;
+    const float depthSmpl  = depth   * (float) sampleRate / 1000.f;
+
+    for (int s = 0; s < numSamples; ++s)
+    {
+        const float inL = buffer.getSample (0, s);
+        const float inR = hasStereo ? buffer.getSample (1, s) : inL;
+
+        // Sinusoidal LFO — quadrature pair (L/R differ by 180° for width)
+        const float lfoL = std::sin (lfoPhaseL * juce::MathConstants<float>::twoPi);
+        const float lfoR = std::sin (lfoPhaseR * juce::MathConstants<float>::twoPi);
+
+        const float delayL = juce::jlimit (1.f, (float)(kMaxDelaySamples - 2),
+                                           centreSmpl + lfoL * depthSmpl);
+        const float delayR = juce::jlimit (1.f, (float)(kMaxDelaySamples - 2),
+                                           centreSmpl + lfoR * depthSmpl);
+
+        // Fractional delay read (linear interpolation)
+        auto readBuf = [] (const float* buf, int writeIdx, float delay) -> float
+        {
+            const float readF = (float)writeIdx - delay;
+            int   i0 = (int)readF;
+            const float frac  = readF - (float)i0;
+            i0 = ((i0 % kMaxDelaySamples) + kMaxDelaySamples) % kMaxDelaySamples;
+            const int i1 = (i0 + 1) % kMaxDelaySamples;
+            return buf[i0] * (1.f - frac) + buf[i1] * frac;
+        };
+
+        const float wetL = readBuf (bufL, writePos, delayL);
+        const float wetR = readBuf (bufR, writePos, delayR);
+
+        // Write input + feedback into delay line
+        bufL[writePos] = juce::jlimit (-2.f, 2.f, inL + wetL * feedback);
+        bufR[writePos] = juce::jlimit (-2.f, 2.f, inR + wetR * feedback);
+
+        buffer.setSample (0, s, inL * (1.f - mix) + (inL + wetL) * 0.5f * mix);
+        if (hasStereo)
+            buffer.setSample (1, s, inR * (1.f - mix) + (inR + wetR) * 0.5f * mix);
+
+        writePos  = (writePos + 1) % kMaxDelaySamples;
+        lfoPhaseL = std::fmod (lfoPhaseL + lfoInc, 1.f);
+        lfoPhaseR = std::fmod (lfoPhaseR + lfoInc, 1.f);
+    }
+}
+
+void FlangerEffect::reset()
+{
+    std::fill (std::begin (bufL), std::end (bufL), 0.f);
+    std::fill (std::begin (bufR), std::end (bufR), 0.f);
+    writePos  = 0;
+    lfoPhaseL = 0.f;
+    lfoPhaseR = 0.5f;
+}
+
+//==============================================================================
+// HarmonicEffect
+//==============================================================================
+// Parallel exciter: HP-filter isolates the target band, soft-clip generates
+// harmonics, those harmonics are added (not replaced) back to the dry signal.
+// p1 = Drive (0–1 → 1–8x)
+// p2 = Freq  (0–1 → 200–5000 Hz, HP corner of the excited band)
+// p3 = Character (< 0.5 = even/warm via abs-saturation, ≥ 0.5 = odd/bright via tanh)
+// mix = blend of harmonic content added on top of dry
+
+void HarmonicEffect::prepare (double sr, int maxBlock)
+{
+    sampleRate = sr;
+
+    juce::dsp::ProcessSpec spec;
+    spec.sampleRate       = sr;
+    spec.maximumBlockSize = (juce::uint32) maxBlock;
+    spec.numChannels      = 2;
+    hpFilter.prepare (spec);
+    dryBuffer.setSize (2, maxBlock);
+}
+
+void HarmonicEffect::process (juce::AudioBuffer<float>& buffer,
+                               const FXSlotParams& params, double)
+{
+    const int numSamples  = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+
+    if (numSamples > dryBuffer.getNumSamples() || numChannels > dryBuffer.getNumChannels())
+        dryBuffer.setSize (numChannels, numSamples, false, true, true);
+
+    // Save dry signal — harmonics are added additively on top
+    for (int ch = 0; ch < numChannels; ++ch)
+        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+    // HP filter isolates the frequency band to excite (avoids muddying the low end)
+    const float maxCutoff = (float) (sampleRate * 0.45);
+    const float freq      = 200.f * std::pow (25.f, params.p2);   // 200–5000 Hz
+    hpFilter.setType (juce::dsp::StateVariableTPTFilterType::highpass);
+    hpFilter.setCutoffFrequency (juce::jlimit (20.f, maxCutoff, freq));
+    hpFilter.setResonance (0.7f);
+
+    {
+        juce::dsp::AudioBlock<float>              block (buffer);
+        juce::dsp::ProcessContextReplacing<float> ctx   (block);
+        hpFilter.process (ctx);
+    }
+
+    // Waveshaper generates harmonics from the filtered band
+    const float drive      = 1.f + params.p1 * 7.f;   // 1–8×
+    const bool  evenChar   = (params.p3 < 0.5f);
+
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        auto* data = buffer.getWritePointer (ch);
+        for (int s = 0; s < numSamples; ++s)
+        {
+            const float x = data[s];
+            // Even harmonics (warm/tube): full-wave rectified soft clip minus linear
+            // Odd  harmonics (bright):    symmetric tanh saturation minus linear
+            data[s] = evenChar ? (std::abs (std::tanh (x * drive)) - std::abs (x))
+                               : (std::tanh (x * drive) - x);
+        }
+    }
+
+    // Add harmonic content back to dry (additive exciter — no dry signal loss)
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        buffer.applyGain (ch, 0, numSamples, params.mix);
+        buffer.addFrom   (ch, 0, dryBuffer, ch, 0, numSamples, 1.f);
+    }
+}
+
+void HarmonicEffect::reset() { hpFilter.reset(); }
+
+//==============================================================================
+// AutoPanEffect
+//==============================================================================
+// Sinusoidal LFO drives constant-power stereo panning.
+// p1 = Rate  (0–1 → 0.05–8 Hz)
+// p2 = Depth (0–1, how far L/R the pan sweeps)
+// p3 = unused (reserved)
+// mix = blend between un-panned and panned signal
+
+void AutoPanEffect::prepare (double sr, int maxBlock)
+{
+    sampleRate = sr;
+    lfoPhase   = 0.f;
+    juce::ignoreUnused (maxBlock);
+}
+
+void AutoPanEffect::process (juce::AudioBuffer<float>& buffer,
+                              const FXSlotParams& params, double)
+{
+    const int   numSamples = buffer.getNumSamples();
+    const bool  hasStereo  = buffer.getNumChannels() > 1;
+
+    const float rate   = 0.05f + params.p1 * 7.95f;   // 0.05–8 Hz
+    const float depth  = params.p2;                     // 0–1
+    const float mix    = params.mix;
+    const float lfoInc = rate / (float) sampleRate;
+
+    for (int s = 0; s < numSamples; ++s)
+    {
+        const float inL = buffer.getSample (0, s);
+        const float inR = hasStereo ? buffer.getSample (1, s) : inL;
+
+        // Sine LFO: −1 (full left) to +1 (full right)
+        const float lfo    = std::sin (lfoPhase * juce::MathConstants<float>::twoPi);
+        const float panPos = lfo * depth;   // −depth … +depth
+
+        // Constant-power law: map pan position to L/R gains
+        // angle ∈ [0, π/2]: 0 = full left, π/4 = centre, π/2 = full right
+        const float angle = (panPos + 1.f) * 0.5f * juce::MathConstants<float>::halfPi;
+        const float gainL = std::cos (angle);
+        const float gainR = std::sin (angle);
+
+        buffer.setSample (0, s, inL * (1.f - mix) + inL * gainL * mix);
+        if (hasStereo)
+            buffer.setSample (1, s, inR * (1.f - mix) + inR * gainR * mix);
+
+        lfoPhase = std::fmod (lfoPhase + lfoInc, 1.f);
+    }
+}
+
+void AutoPanEffect::reset() { lfoPhase = 0.f; }
+
+//==============================================================================
 // FXChain
 //==============================================================================
 
 FXChain::FXChain()
 {
     slotTypes.fill (FXType::None);
+}
+
+FXChain::~FXChain()
+{
+    // Drain both queues so no effects are leaked when the plugin is destroyed.
+    // At teardown the audio thread is stopped, so single-thread access is safe.
+    {
+        int s1, bs1, s2, bs2;
+        const int n = incomingFifo.getNumReady();
+        incomingFifo.prepareToRead (n, s1, bs1, s2, bs2);
+        for (int k = 0; k < bs1; ++k) delete incomingBuf[s1 + k].ptr;
+        for (int k = 0; k < bs2; ++k) delete incomingBuf[s2 + k].ptr;
+        incomingFifo.finishedRead (bs1 + bs2);
+    }
+    {
+        int s1, bs1, s2, bs2;
+        const int n = garbageFifo.getNumReady();
+        garbageFifo.prepareToRead (n, s1, bs1, s2, bs2);
+        for (int k = 0; k < bs1; ++k) delete garbageBuf[s1 + k];
+        for (int k = 0; k < bs2; ++k) delete garbageBuf[s2 + k];
+        garbageFifo.finishedRead (bs1 + bs2);
+    }
+    // slots[] unique_ptrs auto-delete here.
+}
+
+//==============================================================================
+void FXChain::requestTypeChange (int slot, FXType newType)
+{
+    if (slot < 0 || slot >= numSlots)
+        return;
+
+    // Create the new effect on the message thread — allocation is fine here.
+    IEffectProcessor* newEffect = nullptr;
+    if (newType != FXType::None)
+    {
+        auto up  = createEffect (newType, storedSR, storedMaxBlock);
+        newEffect = up.release();
+    }
+
+    // Enqueue for the audio thread.
+    int s1, bs1, s2, bs2;
+    incomingFifo.prepareToWrite (1, s1, bs1, s2, bs2);
+    const int idx = (bs1 > 0) ? s1 : (bs2 > 0 ? s2 : -1);
+    if (idx >= 0)
+    {
+        incomingBuf[idx] = { slot, newType, newEffect };
+        incomingFifo.finishedWrite (1);
+    }
+    else
+    {
+        // Queue full — should never happen with kQueueSize=16 and 4 slots.
+        jassertfalse;
+        delete newEffect;
+    }
+}
+
+void FXChain::collectGarbage()
+{
+    const int n = garbageFifo.getNumReady();
+    if (n == 0) return;
+
+    int s1, bs1, s2, bs2;
+    garbageFifo.prepareToRead (n, s1, bs1, s2, bs2);
+    for (int k = 0; k < bs1; ++k) delete garbageBuf[s1 + k];
+    for (int k = 0; k < bs2; ++k) delete garbageBuf[s2 + k];
+    garbageFifo.finishedRead (bs1 + bs2);
+}
+
+void FXChain::drainIncoming() noexcept
+{
+    const int n = incomingFifo.getNumReady();
+    if (n == 0) return;
+
+    int s1, bs1, s2, bs2;
+    incomingFifo.prepareToRead (n, s1, bs1, s2, bs2);
+
+    auto installRange = [&] (int start, int count)
+    {
+        for (int k = 0; k < count; ++k)
+        {
+            auto& cmd = incomingBuf[start + k];
+
+            // Retire the current occupant to the garbage queue (audio thread cannot delete).
+            IEffectProcessor* old = slots[cmd.slot].release();
+            if (old != nullptr)
+            {
+                int gs1, gbs1, gs2, gbs2;
+                garbageFifo.prepareToWrite (1, gs1, gbs1, gs2, gbs2);
+                if (gbs1 > 0)      { garbageBuf[gs1] = old; garbageFifo.finishedWrite (1); }
+                else if (gbs2 > 0) { garbageBuf[gs2] = old; garbageFifo.finishedWrite (1); }
+                else               { jassertfalse; delete old; } // garbage full — should never happen
+            }
+
+            // Install the new effect (may be nullptr when type changed to None).
+            slots[cmd.slot].reset (cmd.ptr);
+            slotTypes[cmd.slot] = cmd.type;
+        }
+    };
+
+    installRange (s1, bs1);
+    installRange (s2, bs2);
+    incomingFifo.finishedRead (bs1 + bs2);
 }
 
 std::unique_ptr<IEffectProcessor> FXChain::createEffect (FXType type, double sr, int maxBlock)
@@ -527,8 +872,11 @@ std::unique_ptr<IEffectProcessor> FXChain::createEffect (FXType type, double sr,
         case FXType::Chorus:        e = std::make_unique<ChorusEffect>();      break;
         case FXType::Distortion:    e = std::make_unique<DistortionEffect>();  break;
         case FXType::Filter:        e = std::make_unique<FilterEffect>();      break;
-        case FXType::ShimmerReverb: e = std::make_unique<ShimmerEffect>();     break;
-        case FXType::LushChorus:    e = std::make_unique<LushChorusEffect>();  break;
+        case FXType::ShimmerReverb: e = std::make_unique<ShimmerEffect>();      break;
+        case FXType::LushChorus:    e = std::make_unique<LushChorusEffect>(); break;
+        case FXType::Flanger:       e = std::make_unique<FlangerEffect>();    break;
+        case FXType::Harmonic:      e = std::make_unique<HarmonicEffect>();   break;
+        case FXType::AutoPan:       e = std::make_unique<AutoPanEffect>();    break;
         default:                    return nullptr;   // FXType::None
     }
     e->prepare (sr, maxBlock);
@@ -540,11 +888,12 @@ void FXChain::prepare (double sr, int maxBlock)
     storedSR       = sr;
     storedMaxBlock = maxBlock;
 
+    // Drain any pending type changes first so they are installed (and prepared
+    // at the correct sample rate) before audio processing begins.
+    drainIncoming();
+
     for (int i = 0; i < numSlots; ++i)
-    {
-        if (slots[i])
-            slots[i]->prepare (sr, maxBlock);
-    }
+        if (slots[i]) slots[i]->prepare (sr, maxBlock);
 }
 
 void FXChain::reset()
@@ -559,27 +908,22 @@ void FXChain::process (juce::AudioBuffer<float>&            buffer,
                         const std::array<FXSlotParams, numSlots>& params,
                         double bpm)
 {
+    // Pick up any pending type changes enqueued by requestTypeChange() on the
+    // message thread.  No allocation happens here — effects are already created.
+    drainIncoming();
+
     for (int i = 0; i < numSlots; ++i)
     {
         const auto& p = params[i];
 
-        if (p.bypass || p.type == FXType::None)
-        {
-            // Clear slot instance if type changed to None (frees its memory)
-            if (slotTypes[i] != FXType::None)
-            {
-                slots[i].reset();
-                slotTypes[i] = FXType::None;
-            }
+        // Empty slot: nothing to do (drainIncoming() already cleared it).
+        if (p.type == FXType::None)
             continue;
-        }
 
-        // Swap instance when the effect type changes
-        if (p.type != slotTypes[i])
-        {
-            slots[i]    = createEffect (p.type, storedSR, storedMaxBlock);
-            slotTypes[i] = p.type;
-        }
+        // Bypassed: keep the effect instance alive (preserves reverb tail, delay
+        // echo, chorus LFO state, etc.) but skip processing.
+        if (p.bypass)
+            continue;
 
         if (slots[i])
             slots[i]->process (buffer, p, bpm);

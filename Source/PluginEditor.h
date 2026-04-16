@@ -8,6 +8,7 @@
 #include "UI/FXSlotUI.h"
 #include "UI/FractalVisualizer.h"
 #include "UI/LFODisplay.h"
+#include "UI/ADSRDisplay.h"
 #include "UI/StepSequencerUI.h"
 
 class GladeAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -60,11 +61,13 @@ private:
     WaveformDisplay   waveformDisplay;
     FractalVisualizer fractalVisualizer;
 
-    GladeKnob attackKnob, decayKnob, sustainKnob, releaseKnob;
+    GladeKnob   attackKnob, decayKnob, sustainKnob, releaseKnob;
+    ADSRDisplay adsrDisplay;
 
     //==========================================================================
     // GRAIN section
     GladeKnob          grainSizeKnob, grainDensityKnob, grainPositionKnob, posJitterKnob;
+    GladeKnob          reverseKnob;
     juce::TextButton   grainRndButton { "RND" };
     juce::ToggleButton beatSyncButton { "SYNC" };
     GladeCombo         beatDivCombo;
@@ -72,17 +75,23 @@ private:
     juce::ToggleButton seqActiveButton { "SEQ" };
     StepSequencerUI    stepSeqUI;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> seqActiveAtt;
+    juce::ToggleButton freezeButton    { "FREEZE" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt;
 
     // PITCH section
     GladeKnob        pitchShiftKnob, pitchJitterKnob, panSpreadKnob;
+    GladeKnob        glideKnob;
     juce::TextButton pitchRndButton { "RND" };
 
     // OUTPUT section
     GladeKnob outputGainKnob, dryWetKnob;
+    GladeKnob velocityKnob;
 
     //==========================================================================
-    // WINDOW section
+    // WINDOW section + MACRO knobs
     GladeCombo windowCombo;
+    GladeKnob  m1Knob, m2Knob, m3Knob, m4Knob;
+    GladeCombo m1TargetCombo, m2TargetCombo, m3TargetCombo, m4TargetCombo;
 
     // LFO section — 3 independent LFOs, selector switches which set is visible
     GladeKnob  lfo1RateKnob, lfo1DepthKnob;
@@ -91,15 +100,11 @@ private:
     GladeCombo lfo2ShapeCombo, lfo2TargetCombo;
     GladeKnob  lfo3RateKnob, lfo3DepthKnob;
     GladeCombo lfo3ShapeCombo, lfo3TargetCombo;
+
     LFODisplay lfoDisplay;
     juce::TextButton lfoSelBtn[3];
     int activeLfo = 0;   // 0/1/2
 
-    // ENV FOLLOW section
-    juce::ToggleButton envActiveButton { "ENV" };
-    GladeKnob          envAttackKnob, envReleaseKnob, envDepthKnob;
-    GladeCombo         envTargetCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> envActiveAtt;
 
     //==========================================================================
     // FX Chain — 4 slots (type combo is now inside each FXSlotUI)
@@ -110,7 +115,7 @@ private:
     juce::Rectangle<int> headerArea, topArea, midArea, bottomArea;
     juce::Rectangle<int> waveArea, fractalArea, envArea;
     juce::Rectangle<int> grainArea, pitchArea, outputArea;
-    juce::Rectangle<int> windowArea, lfoArea;
+    juce::Rectangle<int> windowArea, lfoArea, macroArea;
 
     void layoutKnobRow (juce::Rectangle<int> rowBounds,
                         std::initializer_list<GladeKnob*> knobs);

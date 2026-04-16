@@ -10,11 +10,13 @@ class LFODisplay : public juce::Component
 public:
     LFODisplay() = default;
 
-    void setLfoState (int shape, float phase, float depth)
+    void setLfoState (int shape, float phase, float depth,
+                      juce::Colour colour = GladeColors::magenta)
     {
-        lfoShape = shape;
-        lfoPhase = juce::jlimit (0.f, 1.f, phase);
-        lfoDepth = juce::jlimit (0.f, 1.f, depth);
+        lfoShape  = shape;
+        lfoPhase  = juce::jlimit (0.f, 1.f, phase);
+        lfoDepth  = juce::jlimit (0.f, 1.f, depth);
+        lfoColour = colour;
     }
 
     void paint (juce::Graphics& g) override
@@ -59,7 +61,7 @@ public:
             else         wave.lineTo          (px, py);
         }
 
-        g.setColour (GladeColors::magenta.withAlpha (0.55f));
+        g.setColour (lfoColour.withAlpha (0.55f));
         g.strokePath (wave, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved));
 
         // ── Phase fill (area behind the cursor) ──────────────────────────────
@@ -75,27 +77,28 @@ public:
             }
             fill.lineTo (ox + lfoPhase * w, cy);
             fill.closeSubPath();
-            g.setColour (GladeColors::magenta.withAlpha (0.08f));
+            g.setColour (lfoColour.withAlpha (0.08f));
             g.fillPath (fill);
         }
 
         // ── Phase cursor line ─────────────────────────────────────────────────
         const float cursorX = ox + lfoPhase * w;
-        g.setColour (GladeColors::magenta.withAlpha (0.9f));
+        g.setColour (lfoColour.withAlpha (0.9f));
         g.drawLine (cursorX, bounds.getY() + 2.f,
                     cursorX, bounds.getBottom() - 2.f, 1.5f);
 
         // Dot on the waveform at cursor position
-        const float cursorV   = evaluateLFO (lfoShape, lfoPhase) * lfoDepth;
+        const float cursorV    = evaluateLFO (lfoShape, lfoPhase) * lfoDepth;
         const float cursorDotY = cy - cursorV * amp;
-        g.setColour (GladeColors::magenta);
+        g.setColour (lfoColour);
         g.fillEllipse (cursorX - 3.f, cursorDotY - 3.f, 6.f, 6.f);
     }
 
 private:
-    int   lfoShape = 0;
-    float lfoPhase = 0.f;
-    float lfoDepth = 0.f;
+    int         lfoShape  = 0;
+    float       lfoPhase  = 0.f;
+    float       lfoDepth  = 0.f;
+    juce::Colour lfoColour { GladeColors::magenta };
 
     // Delegate to the shared evaluator so audio and UI always use identical math.
     static float evaluateLFO (int shape, float t) noexcept

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Glade VERSION 0.1.0)
+project(GladeV2 VERSION 0.2.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,13 +9,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_subdirectory(C:/JUCE glade_juce)
 
 # ── Plugin target ─────────────────────────────────────────────────────────────
-juce_add_plugin(Glade
+juce_add_plugin(GladeV2
     COMPANY_NAME            "GladeAudio"
-    BUNDLE_ID               "com.gladeaudio.glade"
+    BUNDLE_ID               "com.gladeaudio.gladev2"
     PLUGIN_MANUFACTURER_CODE GlAd
-    PLUGIN_CODE             Gld1
+    PLUGIN_CODE             Gld2
     FORMATS                 VST3 Standalone
-    PRODUCT_NAME            "Glade"
+    PRODUCT_NAME            "GladeV2"
     IS_SYNTH                TRUE
     NEEDS_MIDI_INPUT        TRUE
     NEEDS_MIDI_OUTPUT       FALSE
@@ -26,10 +26,10 @@ juce_add_plugin(Glade
 )
 
 # ── Generate JuceHeader.h ─────────────────────────────────────────────────────
-juce_generate_juce_header(Glade)
+juce_generate_juce_header(GladeV2)
 
 # ── Source files ──────────────────────────────────────────────────────────────
-target_sources(Glade PRIVATE
+target_sources(GladeV2 PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/Engine/SampleBuffer.cpp
@@ -46,7 +46,7 @@ target_sources(Glade PRIVATE
 )
 
 # ── Compile definitions ───────────────────────────────────────────────────────
-target_compile_definitions(Glade PUBLIC
+target_compile_definitions(GladeV2 PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
@@ -54,7 +54,7 @@ target_compile_definitions(Glade PUBLIC
 )
 
 # ── JUCE modules ──────────────────────────────────────────────────────────────
-target_link_libraries(Glade PRIVATE
+target_link_libraries(GladeV2 PRIVATE
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_audio_plugin_client

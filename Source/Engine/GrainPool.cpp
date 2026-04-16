@@ -7,14 +7,14 @@ bool GrainPool::activateGrain (double sourceStartPos,
                                 float  panL,
                                 float  panR,
                                 float  amplitude,
-                                WindowType windowType)
+                                WindowType windowType,
+                                bool   isReverse)
 {
     for (auto& g : grains)
     {
         if (!g.active)
         {
             g.active              = true;
-            g.sourceReadPos       = sourceStartPos;
             g.grainLengthSamples  = grainLengthSamples;
             g.pitchRatio          = pitchRatio;
             g.panL                = panL;
@@ -22,6 +22,18 @@ bool GrainPool::activateGrain (double sourceStartPos,
             g.amplitude           = amplitude;
             g.windowType          = windowType;
             g.samplesPlayed       = 0;
+            g.isReverse           = isReverse;
+            // Reverse grains start at the far end of the grain window so they
+            // play backward through the same material a forward grain would cover.
+            // Clamp so the start never lands past the end of the source buffer
+            // (GrainPool::process() clamps the read position per-sample anyway,
+            // but starting in-bounds avoids the first sample being silence).
+            if (isReverse)
+                g.sourceReadPos = sourceStartPos + (double) grainLengthSamples * pitchRatio;
+            else
+                g.sourceReadPos = sourceStartPos;
+            // No per-grain source-length available here; per-sample clamping in
+            // process() handles out-of-bounds reads safely.
             return true;
         }
     }
@@ -99,7 +111,7 @@ void GrainPool::process (juce::AudioBuffer<float>& output,
             outL[s] += sL * gainL;
             if (outR) outR[s] += sR * gainR;
 
-            g.sourceReadPos += g.pitchRatio;
+            g.sourceReadPos += g.isReverse ? -g.pitchRatio : g.pitchRatio;
             ++g.samplesPlayed;
         }
     }

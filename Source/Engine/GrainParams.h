@@ -13,9 +13,9 @@ struct GrainParams
 {
     // ── ADSR ─────────────────────────────────────────────────────────────────
     float attack   = 0.05f;
-    float decay    = 0.10f;
-    float sustain  = 0.80f;
-    float release  = 0.30f;
+    float decay    = 0.50f;
+    float sustain  = 0.30f;
+    float release  = 0.80f;
 
     // ── Grain core ───────────────────────────────────────────────────────────
     float grainSizeMs = 80.f;
@@ -39,27 +39,18 @@ struct GrainParams
     float lfoDepth   = 0.f;
     int   lfoShape   = 0;
     int   lfoTarget  = 0;
-    bool  lfoSync    = false;
-    int   lfoSyncDiv = 3;    // index into syncMults[]
 
     // ── LFO 2 ─────────────────────────────────────────────────────────────────
-    float lfoRate2   = 1.f;
-    float lfoDepth2  = 0.f;
-    int   lfoShape2  = 0;
-    int   lfoTarget2 = 0;
+    float lfoRate2    = 1.f;
+    float lfoDepth2   = 0.f;
+    int   lfoShape2   = 0;
+    int   lfoTarget2  = 0;
 
     // ── LFO 3 ─────────────────────────────────────────────────────────────────
-    float lfoRate3   = 1.f;
-    float lfoDepth3  = 0.f;
-    int   lfoShape3  = 0;
-    int   lfoTarget3 = 0;
-
-    // ── Envelope follower modulation ──────────────────────────────────────────
-    bool  envActive  = false;
-    float envAttack  = 0.05f;
-    float envRelease = 0.30f;
-    float envDepth   = 0.f;
-    int   envTarget  = 0;
+    float lfoRate3    = 1.f;
+    float lfoDepth3   = 0.f;
+    int   lfoShape3   = 0;
+    int   lfoTarget3  = 0;
 
     // ── Step sequencer ────────────────────────────────────────────────────────
     bool  seqActive                       = false;
@@ -69,4 +60,22 @@ struct GrainParams
 
     // ── Host state ────────────────────────────────────────────────────────────
     double bpm = 120.0;
+
+    // ── Reverse grains ────────────────────────────────────────────────────────
+    float reverseAmount = 0.f;   // 0=all forward, 1=all backward, 0.5=random mix
+
+    // ── Grain freeze ─────────────────────────────────────────────────────────
+    bool  freeze = false;        // when true, locks playhead to frozen position
+
+    // ── Velocity sensitivity ──────────────────────────────────────────────────
+    float velocityDepth = 0.f;   // 0=no effect, 1=full velocity→amplitude mapping
+
+    // ── Portamento / glide ────────────────────────────────────────────────────
+    float glideTime = 0.f;       // seconds to slide between MIDI notes (0=off)
+
+    // ── Macro knobs M1–M4 ─────────────────────────────────────────────────────
+    // Each macro outputs (value − 0.5) × 2 → −1..+1 additive modulation on its target.
+    // Default 0.5 = neutral (no offset). Targets use the same indices as LFO targets.
+    float m1 = 0.5f, m2 = 0.5f, m3 = 0.5f, m4 = 0.5f;
+    int   m1Target = 0, m2Target = 0, m3Target = 0, m4Target = 0;
 };

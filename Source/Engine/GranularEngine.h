@@ -3,7 +3,6 @@
 #include "GrainPool.h"
 #include "GrainScheduler.h"
 #include "PitchDetector.h"
-#include "EnvelopeFollower.h"
 #include "StepSequencer.h"
 #include "GrainParams.h"
 #include "LFOFunction.h"
@@ -48,11 +47,15 @@ public:
     float getLfoOutput2()      const { return lfoOutput2Atomic.load();     }
     float getLfoPhase3()       const { return lfoPhase3Atomic.load();      }
     float getLfoOutput3()      const { return lfoOutput3Atomic.load();     }
-    float getEnvFollowValue()  const { return envFollowValueAtomic.load(); }
     int   getSeqCurrentStep()  const { return stepSequencer.getCurrentStep(); }
 
     // Final modulated grain position (after all LFO / env / seq modulation)
     float getModulatedPosition() const { return modulatedPositionAtomic.load(); }
+
+    /** ADSR cursor: 0..1 position along the A/D/S/R shape for UI display.
+     *  Encoding: 0–0.25 = attack, 0.25–0.5 = decay, 0.5 = sustain held,
+     *            0.75–1.0 = release.  Returns -1 when the envelope is idle. */
+    float getAdsrCursor() const { return adsrCursorAtomic.load(); }
 
 private:
     double sampleRate = 44100.0;
@@ -88,11 +91,15 @@ private:
     std::atomic<float> lfoOutput2Atomic        { 0.f };
     std::atomic<float> lfoPhase3Atomic         { 0.f };
     std::atomic<float> lfoOutput3Atomic        { 0.f };
-    std::atomic<float> envFollowValueAtomic    { 0.f };
     std::atomic<float> modulatedPositionAtomic { 0.5f };
+    std::atomic<float> adsrCursorAtomic        { -1.f };  // -1 = idle/hidden
 
-    // Envelope follower
-    EnvelopeFollower envFollower;
+    // ADSR visualisation state (audio thread only — no atomics needed for these)
+    enum class AdsrVizStage { Idle, Attack, Decay, Sustain, Release };
+    AdsrVizStage adsrVizStage   { AdsrVizStage::Idle };
+    double       adsrVizTimeSec { 0.0 };
+    bool         adsrVizNoteOn  { false };   // set by handleMidi, consumed by process()
+    bool         adsrVizNoteOff { false };
 
     // Step sequencer
     StepSequencer stepSequencer;
@@ -103,6 +110,11 @@ private:
     float calcLFO (float rate, int shape, int numSamples,
                    double& phase, float& lastSH) noexcept;
 
+    // Set by loadSample() (message thread) so the audio thread can safely reset
+    // the pool and scheduler at the top of the next process() call, rather than
+    // having the message thread reach into audio-thread-owned objects directly.
+    std::atomic<bool> resetRequested { false };
+
     // Wet-signal scratch buffer; sized to maxBlockSize in prepare()
     juce::AudioBuffer<float> wetBuffer;
 
@@ -111,6 +123,12 @@ private:
 
     void   handleMidi (juce::MidiBuffer& midi);
     double midiNoteToPitchRatio (int note) const;
+
+    // ── Feature state (audio thread only — no atomics needed) ─────────────────
+    float  lastVelocity      { 1.0f };   // latest noteOn velocity (0–1)
+    float  frozenPosition    { 0.5f };   // position snapshot for FREEZE
+    bool   prevFreeze        { false };  // edge-detect freeze activation
+    double glidePitchRatio   { 1.0 };   // current smoothed MIDI pitch ratio
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GranularEngine)
 };

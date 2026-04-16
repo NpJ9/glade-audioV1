@@ -16,7 +16,9 @@ void GrainScheduler::process (int        numSamples,
                                WindowType windowType,
                                bool       isActive,
                                int        scaleIdx,
-                               int        rootNote)
+                               int        rootNote,
+                               float      reverseAmount,
+                               float      velocityScale)
 {
     if (!isActive || numSourceSamples == 0) return;
 
@@ -71,10 +73,16 @@ void GrainScheduler::process (int        numSamples,
             const float coherentAmp     = 1.0f / expectedOverlap;
             const float incoherentAmp   = 1.0f / std::sqrt (expectedOverlap);
             const float jitterBlend     = juce::jlimit (0.f, 1.f, positionJitter * 8.f);
-            const float amplitude       = coherentAmp   * (1.f - jitterBlend)
-                                        + incoherentAmp * jitterBlend;
+            const float amplitude       = (coherentAmp   * (1.f - jitterBlend)
+                                        + incoherentAmp * jitterBlend)
+                                        * juce::jlimit (0.f, 1.f, velocityScale);
+
+            // Decide per-grain whether to reverse based on reverseAmount probability.
+            // reverseAmount 0 = all forward, 1 = all backward, 0.5 = 50/50 random mix.
+            const bool isReverse = ((float) random.nextDouble() < reverseAmount);
+
             pool.activateGrain (startPos, grainLengthSamples, finalPitchRatio,
-                                panL, panR, amplitude, windowType);
+                                panL, panR, amplitude, windowType, isReverse);
 
             // Reset countdown with slight jitter on the interval itself (±5%)
             const double intervalJitter = intervalSamples * 0.05 * (random.nextDouble() * 2.0 - 1.0);

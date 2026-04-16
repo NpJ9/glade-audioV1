@@ -22,7 +22,7 @@ PresetManager::PresetManager()
     {
         {"grainSize",80.f},{"grainDensity",30.f},{"grainPosition",0.5f},{"posJitter",0.f},
         {"pitchShift",0.f},{"pitchJitter",0.f},{"panSpread",0.f},
-        {"attack",0.05f},{"decay",0.1f},{"sustain",0.8f},{"release",0.3f},
+        {"attack",0.05f},{"decay",0.5f},{"sustain",0.3f},{"release",0.8f},
         {"outputGain",0.f},{"dryWet",1.f},
         {"lfoRate",1.f},{"lfoDepth",0.f},{"pitchScale",0.f},{"pitchRoot",0.f},
     }));
@@ -57,6 +57,7 @@ PresetManager::PresetManager()
         {"outputGain",0.f},{"dryWet",1.f},
         {"lfoRate",7.f},{"lfoDepth",0.4f},
         {"pitchScale",0.f},{"pitchRoot",0.f},
+        {"reverseAmount",0.45f},
         {"fxType1",4.f},{"fxP11",0.7f},{"fxP21",0.5f},{"fxP31",0.5f},{"fxMix1",0.6f},
     }));
 
@@ -113,6 +114,7 @@ PresetManager::PresetManager()
         {"attack",0.001f},{"decay",0.05f},{"sustain",0.7f},{"release",0.12f},
         {"outputGain",0.f},{"dryWet",0.85f},
         {"lfoRate",4.f},{"lfoDepth",0.2f},{"lfoTarget",2.f},  // LFO → density
+        {"velocityDepth",0.5f},
         {"fxType0",2.f},{"fxP10",0.3f},{"fxP20",0.55f},{"fxP30",0.f},{"fxMix0",0.45f},
         {"fxType1",4.f},{"fxP11",0.55f},{"fxP21",0.45f},{"fxP31",0.5f},{"fxMix1",0.4f},
     }));
@@ -125,6 +127,7 @@ PresetManager::PresetManager()
         {"attack",0.05f},{"decay",0.15f},{"sustain",0.85f},{"release",0.5f},
         {"outputGain",-2.f},{"dryWet",1.f},
         {"lfoRate",0.5f},{"lfoDepth",0.15f},{"lfoTarget",3.f},  // LFO → position
+        {"velocityDepth",0.35f},
         {"fxType0",3.f},{"fxP10",0.35f},{"fxP20",0.55f},{"fxP30",0.25f},{"fxMix0",0.55f},
         {"fxType1",1.f},{"fxP11",0.7f},{"fxP21",0.25f},{"fxP31",0.8f},{"fxMix1",0.5f},
     }));
@@ -196,6 +199,7 @@ PresetManager::PresetManager()
         {"attack",0.001f},{"decay",0.06f},{"sustain",0.5f},{"release",0.1f},
         {"outputGain",1.f},{"dryWet",1.f},
         {"lfoRate",8.f},{"lfoDepth",0.45f},{"lfoTarget",2.f},
+        {"velocityDepth",0.6f},
         {"fxType0",4.f},{"fxP10",0.6f},{"fxP20",0.7f},{"fxP30",0.5f},{"fxMix0",0.55f},
         {"fxType1",2.f},{"fxP11",0.25f},{"fxP21",0.4f},{"fxP31",0.f},{"fxMix1",0.3f},
     }));
@@ -243,6 +247,7 @@ PresetManager::PresetManager()
         {"attack",0.001f},{"decay",0.03f},{"sustain",1.f},{"release",0.05f},
         {"outputGain",-6.f},{"dryWet",1.f},
         {"lfoRate",12.f},{"lfoDepth",0.6f},{"lfoTarget",2.f},
+        {"reverseAmount",0.5f},
         {"fxType0",4.f},{"fxP10",0.9f},{"fxP20",1.f},{"fxP30",0.5f},{"fxMix0",0.7f},
         {"fxType1",5.f},{"fxP11",0.7f},{"fxP21",0.8f},{"fxP31",0.67f},{"fxMix1",0.6f},
     }));
@@ -317,6 +322,42 @@ PresetManager::PresetManager()
         {"fxType0",1.f},{"fxP10",0.99f},{"fxP20",0.08f},{"fxP30",0.97f},{"fxMix0",0.9f},
     }));
 
+    // ── VOID-family presets ───────────────────────────────────────────────────
+
+    presets.push_back (makePreset ("ABYSS", "Atmospheric",
+    {   // Deeper, slower version of VOID — octave lower, barely any density
+        {"grainSize",500.f},{"grainDensity",4.f},{"grainPosition",0.5f},{"posJitter",0.04f},
+        {"pitchShift",-24.f},{"pitchJitter",0.f},{"panSpread",0.4f},
+        {"attack",4.f},{"decay",2.f},{"sustain",1.f},{"release",8.f},
+        {"outputGain",-5.f},{"dryWet",1.f},
+        {"lfoRate",0.03f},{"lfoDepth",0.06f},{"lfoTarget",3.f},
+        {"pitchScale",4.f},{"pitchRoot",0.f},
+        {"fxType0",1.f},{"fxP10",0.99f},{"fxP20",0.6f},{"fxP30",0.98f},{"fxMix0",0.95f},
+    }));
+
+    presets.push_back (makePreset ("HOLLOW", "Atmospheric",
+    {   // VOID character with flanging — metallic resonant space
+        {"grainSize",350.f},{"grainDensity",7.f},{"grainPosition",0.5f},{"posJitter",0.06f},
+        {"pitchShift",-12.f},{"pitchJitter",0.02f},{"panSpread",0.35f},
+        {"attack",2.5f},{"decay",1.f},{"sustain",1.f},{"release",6.f},
+        {"outputGain",-4.f},{"dryWet",1.f},
+        {"lfoRate",0.04f},{"lfoDepth",0.1f},{"lfoTarget",1.f},
+        {"pitchScale",4.f},{"pitchRoot",0.f},
+        {"fxType0",1.f},{"fxP10",0.97f},{"fxP20",0.45f},{"fxP30",0.96f},{"fxMix0",0.88f},
+        {"fxType1",8.f},{"fxP11",0.12f},{"fxP21",0.6f},{"fxP31",0.4f},{"fxMix1",0.35f},
+    }));
+
+    presets.push_back (makePreset ("MONOLITH", "Atmospheric",
+    {   // VOID + octave-up shimmer — dark foundation, bright overtone halo
+        {"grainSize",420.f},{"grainDensity",5.f},{"grainPosition",0.48f},{"posJitter",0.05f},
+        {"pitchShift",-12.f},{"pitchJitter",0.01f},{"panSpread",0.5f},
+        {"attack",3.f},{"decay",1.5f},{"sustain",1.f},{"release",7.f},
+        {"outputGain",-4.f},{"dryWet",1.f},
+        {"lfoRate",0.05f},{"lfoDepth",0.07f},{"lfoTarget",3.f},
+        {"pitchScale",4.f},{"pitchRoot",0.f},
+        {"fxType0",6.f},{"fxP10",0.96f},{"fxP20",0.55f},{"fxP30",0.45f},{"fxMix0",0.85f},
+    }));
+
     presets.push_back (makePreset ("AMBER", "Atmospheric",
     {   // Warm golden pad, gentle LFO drift, slow chorusing
         {"grainSize",200.f},{"grainDensity",12.f},{"grainPosition",0.45f},{"posJitter",0.1f},
@@ -328,21 +369,59 @@ PresetManager::PresetManager()
         {"fxType0",3.f},{"fxP10",0.25f},{"fxP20",0.65f},{"fxP30",0.2f},{"fxMix0",0.45f},
         {"fxType1",1.f},{"fxP11",0.82f},{"fxP21",0.35f},{"fxP31",0.8f},{"fxMix1",0.6f},
     }));
+
+    presets.push_back (makePreset ("PRISM", "Atmospheric",
+    {   // Harmonic exciter on a lush reverb pad — bright overtone shimmer
+        {"grainSize",160.f},{"grainDensity",20.f},{"grainPosition",0.5f},{"posJitter",0.15f},
+        {"pitchShift",5.f},{"pitchJitter",0.1f},{"panSpread",0.7f},
+        {"attack",1.2f},{"decay",0.8f},{"sustain",0.8f},{"release",3.f},
+        {"outputGain",-3.f},{"dryWet",1.f},
+        {"lfoRate",0.1f},{"lfoDepth",0.15f},{"lfoTarget",3.f},
+        {"pitchScale",1.f},{"pitchRoot",0.f},
+        {"fxType0",1.f},{"fxP10",0.88f},{"fxP20",0.25f},{"fxP30",0.85f},{"fxMix0",0.7f},
+        {"fxType1",9.f},{"fxP11",0.45f},{"fxP21",0.6f},{"fxP31",0.8f},{"fxMix1",0.35f},
+    }));
+
+    presets.push_back (makePreset ("ORBIT", "Rhythmic",
+    {   // Auto-pan driven rhythmic texture — grains drift L/R in tempo
+        {"grainSize",35.f},{"grainDensity",30.f},{"grainPosition",0.5f},{"posJitter",0.3f},
+        {"beatSync",1.f},{"beatDivision",4.f},  // 1/8
+        {"pitchShift",0.f},{"pitchJitter",0.2f},{"panSpread",0.5f},
+        {"attack",0.01f},{"decay",0.2f},{"sustain",0.5f},{"release",0.4f},
+        {"outputGain",-1.f},{"dryWet",1.f},
+        {"lfoRate",1.5f},{"lfoDepth",0.2f},{"lfoTarget",4.f},
+        {"velocityDepth",0.4f},
+        {"fxType0",10.f},{"fxP10",0.3f},{"fxP20",0.75f},{"fxP30",0.5f},{"fxMix0",0.8f},
+        {"fxType1",2.f},{"fxP11",0.4f},{"fxP21",0.5f},{"fxP31",0.f},{"fxMix1",0.4f},
+    }));
 }
 
 //==============================================================================
 void PresetManager::applyPreset (const Preset& p,
                                   juce::AudioProcessorValueTreeState& apvts)
 {
-    // Always reset toggle-state params to off before applying so that presets
-    // which don't include them don't inherit the previous preset's state.
-    static const char* resetIds[] = { "beatSync", "seqActive" };
-    for (auto* id : resetIds)
+    // Always reset these params to their defaults before applying — any preset
+    // that doesn't explicitly set them should start from a known baseline, not
+    // inherit whatever the previous preset had.
+    static const struct { const char* id; float val; } resets[] =
     {
-        if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id)))
+        { "beatSync",      0.f }, { "seqActive",   0.f },
+        // New performance features default to neutral / off
+        { "reverseAmount", 0.f }, { "freeze",       0.f },
+        { "velocityDepth", 0.f }, { "glideTime",    0.f },
+        { "m1", 0.5f }, { "m2", 0.5f }, { "m3", 0.5f }, { "m4", 0.5f },
+        { "m1Target", 0.f }, { "m2Target", 0.f },
+        { "m3Target", 0.f }, { "m4Target", 0.f },
+        // LFO 2 & 3 back to silent
+        { "lfoDepth2", 0.f }, { "lfoTarget2", 0.f },
+        { "lfoDepth3", 0.f }, { "lfoTarget3", 0.f },
+    };
+    for (auto& r : resets)
+    {
+        if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (r.id)))
         {
             param->beginChangeGesture();
-            param->setValueNotifyingHost (0.f);
+            param->setValueNotifyingHost (param->getNormalisableRange().convertTo0to1 (r.val));
             param->endChangeGesture();
         }
     }

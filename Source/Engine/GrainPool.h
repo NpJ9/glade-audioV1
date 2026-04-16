@@ -16,7 +16,8 @@ public:
                         float  panL,
                         float  panR,
                         float  amplitude,
-                        WindowType windowType);
+                        WindowType windowType,
+                        bool   isReverse = false);
 
     // Process all active grains into output, reading from source.
     // output must already be zeroed before calling.

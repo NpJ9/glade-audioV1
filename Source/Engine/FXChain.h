@@ -5,7 +5,7 @@
 
 //==============================================================================
 enum class FXType { None = 0, Reverb, Delay, Chorus, Distortion, Filter,
-                    ShimmerReverb, LushChorus };
+                    ShimmerReverb, LushChorus, Flanger, Harmonic, AutoPan };
 
 struct FXSlotParams
 {
@@ -130,6 +130,52 @@ private:
     float shimReadPos1   = 0.f;
 };
 
+// FLANGER  p1=Rate(0-1→0.05-5Hz)  p2=Depth(0-1)  p3=Feedback(-1..1)  mix
+// Classic all-pass style flanger: one LFO-modulated short delay (1-8ms)
+// summed back with the dry signal, producing a comb-filter sweep.
+class FlangerEffect : public IEffectProcessor
+{
+public:
+    void prepare (double sr, int maxBlock) override;
+    void process (juce::AudioBuffer<float>&, const FXSlotParams&, double bpm) override;
+    void reset() override;
+private:
+    double sampleRate = 44100.0;
+    static constexpr int kMaxDelaySamples = 4096;   // ~93ms at 44100
+    float bufL[kMaxDelaySamples] = {};
+    float bufR[kMaxDelaySamples] = {};
+    int   writePos = 0;
+    float lfoPhaseL = 0.f;
+    float lfoPhaseR = 0.5f;  // 180° offset for stereo width
+};
+
+// HARMONIC EXCITER  p1=Drive  p2=Freq(target band 200-5000Hz)  p3=Character(0=even/warm, 1=odd/bright)  mix
+// Parallel saturation exciter: HP-filtered band → soft-clip → additive blend.
+class HarmonicEffect : public IEffectProcessor
+{
+public:
+    void prepare (double sr, int maxBlock) override;
+    void process (juce::AudioBuffer<float>&, const FXSlotParams&, double bpm) override;
+    void reset() override;
+private:
+    double sampleRate = 44100.0;
+    juce::dsp::StateVariableTPTFilter<float> hpFilter;
+    juce::AudioBuffer<float> dryBuffer;
+};
+
+// AUTO-PAN  p1=Rate(0-1→0.05-8Hz)  p2=Depth  p3=unused  mix
+// Sinusoidal LFO-driven constant-power stereo panner.
+class AutoPanEffect : public IEffectProcessor
+{
+public:
+    void prepare (double sr, int maxBlock) override;
+    void process (juce::AudioBuffer<float>&, const FXSlotParams&, double bpm) override;
+    void reset() override;
+private:
+    double sampleRate = 44100.0;
+    float  lfoPhase   = 0.f;
+};
+
 // LUSH CHORUS  p1=Rate  p2=Depth  p3=Feedback  mix
 // 6-voice BBD-style chorus with staggered LFO rates.
 class LushChorusEffect : public IEffectProcessor
@@ -148,16 +194,30 @@ private:
 };
 
 //==============================================================================
-/** 4-slot FX chain.  Each slot holds a unique_ptr<IEffectProcessor> that is
- *  constructed on demand when the slot type changes.  The processor layer
- *  passes a pre-built array of FXSlotParams so FXChain has no dependency on
- *  juce::AudioProcessorValueTreeState. */
+/** 4-slot FX chain.  Each slot holds a unique_ptr<IEffectProcessor>.
+ *
+ *  Thread-safety model
+ *  -------------------
+ *  Effect CREATION is expensive (heap allocation + DSP setup).  It must not
+ *  happen on the audio thread.  The protocol is:
+ *
+ *    Message thread  →  requestTypeChange(slot, type)
+ *      Creates the new effect, writes it into incomingFifo (SPSC, M→A).
+ *
+ *    Audio thread    →  drainIncoming()  (called at the top of process())
+ *      Swaps in the new effect; the old effect pointer goes into garbageFifo (A→M).
+ *
+ *    Message thread  →  collectGarbage()  (called from the editor's 30-Hz timer)
+ *      Deletes the old effects from garbageFifo.
+ *
+ *  Neither queue ever blocks.  The audio thread never allocates or deletes. */
 class FXChain
 {
 public:
     static constexpr int numSlots = 4;
 
     FXChain();
+    ~FXChain();
 
     void prepare (double sampleRate, int maxBlockSize);
     void process (juce::AudioBuffer<float>&,
@@ -165,9 +225,18 @@ public:
                   double bpm);
     void reset();
 
+    /** Call from the message thread when the user changes an effect type.
+     *  Creates the new effect immediately (safe to allocate here) and enqueues
+     *  it for the audio thread to install on its next process() call. */
+    void requestTypeChange (int slot, FXType newType);
+
+    /** Call from the message thread (e.g. editor timer) to delete old effects
+     *  that were retired by the audio thread. */
+    void collectGarbage();
+
 private:
     std::array<std::unique_ptr<IEffectProcessor>, numSlots> slots;
-    std::array<FXType, numSlots> slotTypes;
+    std::array<FXType, numSlots>                            slotTypes;
 
     // Stored so newly created effect instances can be prepared immediately.
     double storedSR       = 44100.0;
@@ -176,6 +245,28 @@ private:
     static std::unique_ptr<IEffectProcessor> createEffect (FXType type,
                                                             double sr,
                                                             int    maxBlock);
+
+    // ── Lock-free SPSC queues ────────────────────────────────────────────────
+    struct EffectUpdate
+    {
+        int               slot   = -1;
+        FXType            type   = FXType::None;
+        IEffectProcessor* ptr    = nullptr;   // nullptr means "clear this slot"
+    };
+
+    static constexpr int kQueueSize = 16;   // 4 slots × up to 4 rapid changes each
+
+    // Message thread → Audio thread: new effects to install
+    juce::AbstractFifo incomingFifo { kQueueSize };
+    EffectUpdate       incomingBuf  [kQueueSize];
+
+    // Audio thread → Message thread: old effects to delete
+    juce::AbstractFifo garbageFifo  { kQueueSize };
+    IEffectProcessor*  garbageBuf   [kQueueSize] {};
+
+    /** Drain incomingFifo and swap in any pending effects.  Audio thread only. */
+    void drainIncoming() noexcept;
+
     FXChain (const FXChain&) = delete;
     FXChain& operator= (const FXChain&) = delete;
 };

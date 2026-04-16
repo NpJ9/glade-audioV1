@@ -17,12 +17,14 @@ struct PluginState
     float lfoOutput[3] = {};
 
     // Modulation
-    float envFollowValue    = 0.f;
     float modulatedPosition = 0.5f;
 
     // MIDI / pitch
     int currentMidiNote  = -1;
     int detectedRootNote = 60;
+
+    // ADSR display cursor (-1 = idle/hidden, 0..1 = position along A/D/S/R curve)
+    float adsrCursor = -1.f;
 
     // Sequencer
     int seqCurrentStep = -1;
@@ -38,7 +40,8 @@ struct PluginState
 };
 
 //==============================================================================
-class GladeAudioProcessor : public juce::AudioProcessor
+class GladeAudioProcessor : public juce::AudioProcessor,
+                            private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     GladeAudioProcessor();
@@ -117,6 +120,10 @@ private:
     juce::LinearSmoothedValue<float> dryWetSmoothed;
 
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // APVTS listener: fires on the message thread when fxType* parameters change,
+    // forwarding the new type to FXChain via its lock-free incoming queue.
+    void parameterChanged (const juce::String& paramId, float newValue) override;
 
     /** Read all APVTS parameters into a GrainParams struct.  All APVTS reads
      *  happen here, once per block, so the engine layer is decoupled. */

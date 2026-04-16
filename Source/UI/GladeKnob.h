@@ -19,9 +19,11 @@ public:
     void paint  (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
 
-    /** Call from timerCallback to show LFO modulation ring (magenta).
-        output = raw LFO value -1..1, depth = lfoDepth 0..1. Pass depth=0 to hide. */
-    void setLfoOverlay (float output, float depth);
+    /** Call from timerCallback to show one LFO's modulation ring in its own colour.
+        lfoIndex = 0/1/2, output = raw LFO value -1..1, depth = lfoDepth 0..1.
+        Pass depth=0 to hide that ring.  Rings are drawn at staggered radii so all
+        three are visible simultaneously when multiple LFOs target the same knob. */
+    void setLfoOverlay (int lfoIndex, float output, float depth, juce::Colour colour);
 
     /** Call from timerCallback to show envelope follower ring (cyan).
         value = follower output 0..1, depth = envDepth 0..1. Pass depth=0 to hide. */
@@ -32,8 +34,14 @@ public:
 private:
     void sliderValueChanged (juce::Slider*) override;
 
-    float lfoModOutput = 0.f;   // -1..1
-    float lfoModDepth  = 0.f;   // 0..1  (0 = hidden)
+    struct LfoRing
+    {
+        float        output = 0.f;
+        float        depth  = 0.f;
+        juce::Colour colour { GladeColors::magenta };
+    };
+    LfoRing lfoRings[3];
+
     float envModValue  = 0.f;   // 0..1
     float envModDepth  = 0.f;   // 0..1  (0 = hidden)
 

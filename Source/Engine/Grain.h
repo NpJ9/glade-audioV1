@@ -14,6 +14,7 @@ struct Grain
     float      amplitude        = 1.0f;
 
     WindowType windowType       = WindowType::Hanning;
+    bool       isReverse        = false;   // true → advance sourceReadPos by -pitchRatio
 
     void reset()
     {
@@ -25,5 +26,6 @@ struct Grain
         panL = panR         = 1.0f;
         amplitude           = 1.0f;
         windowType          = WindowType::Hanning;
+        isReverse           = false;
     }
 };

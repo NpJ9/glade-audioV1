@@ -26,8 +26,10 @@ public:
                   float           panSpread,          // 0-1
                   WindowType      windowType,
                   bool            isActive,
-                  int             scaleIdx = 0,       // 0=Chromatic … 6=Dorian
-                  int             rootNote = 0);      // 0=C … 11=B
+                  int             scaleIdx       = 0,   // 0=Chromatic … 6=Dorian
+                  int             rootNote       = 0,   // 0=C … 11=B
+                  float           reverseAmount  = 0.f, // 0=all fwd, 1=all rev, 0.5=mix
+                  float           velocityScale  = 1.f);// 0–1 MIDI velocity scale
 
     void reset() { samplesUntilNextGrain = 0.0; }
 
