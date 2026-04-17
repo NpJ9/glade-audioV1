@@ -47,6 +47,7 @@ private:
 
     juce::String paramId;
     juce::String displayName;
+    juce::String cachedValueStr { "0.00" };   // updated in sliderValueChanged, not in paint()
     juce::Colour accent;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;

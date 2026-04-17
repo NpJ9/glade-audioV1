@@ -144,8 +144,15 @@ GladeAudioProcessor::createParameterLayout()
         params.push_back (std::make_unique<juce::AudioParameterFloat> (
             "m" + s, "Macro " + s,
             juce::NormalisableRange<float>(0.f, 1.f), 0.5f));
+        // Target 1 (existing)
         params.push_back (std::make_unique<juce::AudioParameterChoice> (
             "m" + s + "Target", "Macro " + s + " Target", macroTargets, 0));
+        // Targets 2–4 (new — each macro can modulate up to 4 parameters)
+        for (int t = 2; t <= 4; ++t)
+            params.push_back (std::make_unique<juce::AudioParameterChoice> (
+                "m" + s + "Target" + juce::String(t),
+                "Macro " + s + " Target " + juce::String(t),
+                macroTargets, 0));
     }
 
     // ── FX Chain slots (4 slots, each has type + 4 params + bypass) ──────────
@@ -255,10 +262,29 @@ GrainParams GladeAudioProcessor::buildGrainParams() const
     p.glideTime     = getF ("glideTime");
 
     // ── Macro knobs M1–M4 ─────────────────────────────────────────────────────
-    p.m1 = getF ("m1");  p.m1Target = (int) getF ("m1Target");
-    p.m2 = getF ("m2");  p.m2Target = (int) getF ("m2Target");
-    p.m3 = getF ("m3");  p.m3Target = (int) getF ("m3Target");
-    p.m4 = getF ("m4");  p.m4Target = (int) getF ("m4Target");
+    p.m1 = getF ("m1");
+    p.m1Target  = (int) getF ("m1Target");
+    p.m1Target2 = (int) getF ("m1Target2");
+    p.m1Target3 = (int) getF ("m1Target3");
+    p.m1Target4 = (int) getF ("m1Target4");
+
+    p.m2 = getF ("m2");
+    p.m2Target  = (int) getF ("m2Target");
+    p.m2Target2 = (int) getF ("m2Target2");
+    p.m2Target3 = (int) getF ("m2Target3");
+    p.m2Target4 = (int) getF ("m2Target4");
+
+    p.m3 = getF ("m3");
+    p.m3Target  = (int) getF ("m3Target");
+    p.m3Target2 = (int) getF ("m3Target2");
+    p.m3Target3 = (int) getF ("m3Target3");
+    p.m3Target4 = (int) getF ("m3Target4");
+
+    p.m4 = getF ("m4");
+    p.m4Target  = (int) getF ("m4Target");
+    p.m4Target2 = (int) getF ("m4Target2");
+    p.m4Target3 = (int) getF ("m4Target3");
+    p.m4Target4 = (int) getF ("m4Target4");
 
     return p;
 }
@@ -379,6 +405,20 @@ PluginState GladeAudioProcessor::getState() const noexcept
 
 bool GladeAudioProcessor::loadSample (const juce::File& file)
 {
+    // Reject files larger than 512 MB before attempting to load them.
+    // A 512 MB stereo float32 buffer is ~32M samples — far beyond any practical
+    // granular use.  Preventing the load avoids an OOM crash on low-memory systems.
+    static constexpr juce::int64 kMaxBytes = 512LL * 1024 * 1024;
+    if (file.getSize() > kMaxBytes)
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "File Too Large",
+            "The selected file is larger than 512 MB and cannot be loaded.\n"
+            "Please use a shorter or lower-resolution sample.");
+        return false;
+    }
+
     const bool ok = granularEngine.loadSample (file);
     if (ok) lastLoadedFile = file;
     return ok;
@@ -413,22 +453,30 @@ void GladeAudioProcessor::setStateInformation (const void* data, int sizeInBytes
     // Copy the XmlElement so the shared_ptr owns it safely in the lambda.
     auto xmlOwned = std::make_shared<juce::XmlElement> (*xml);
 
-    juce::MessageManager::callAsync ([this, xmlOwned]
+    // Capture a WeakReference so the lambda is safe if the plugin is destroyed
+    // before the message thread processes it (e.g. rapid DAW load/unload).
+    juce::WeakReference<GladeAudioProcessor> weakThis (this);
+
+    juce::MessageManager::callAsync ([weakThis, xmlOwned]
     {
+        // If the processor was destroyed while this was queued, bail out.
+        auto* self = weakThis.get();
+        if (self == nullptr) return;
+
         auto state = juce::ValueTree::fromXml (*xmlOwned);
 
         // replaceState fires parameterChanged for every parameter — fxType changes
         // arrive on the message thread and call requestTypeChange(), which is safe.
-        apvts.replaceState (state);
+        self->apvts.replaceState (state);
 
         if (state.hasProperty ("presetName"))
-            currentPresetName = state.getProperty ("presetName").toString();
+            self->currentPresetName = state.getProperty ("presetName").toString();
 
         if (state.hasProperty ("samplePath"))
         {
             const juce::File f (state.getProperty ("samplePath").toString());
             if (f.existsAsFile())
-                loadSample (f);   // loadSample is message-thread-only; correct here
+                self->loadSample (f);   // loadSample is message-thread-only; correct here
         }
     });
 }

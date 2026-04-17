@@ -8,16 +8,19 @@ const FXSlotUI::EffectInfo& FXSlotUI::infoForType (int type)
 {
     static const EffectInfo table[] =
     {
-        { "NONE",     "-",      "-",       "-",       GladeColors::border  },
-        { "REVERB",   "Size",   "Damp",    "Width",   GladeColors::purple  },
-        { "DELAY",    "Time",   "Feedbk",  "Spread",  GladeColors::cyan    },
-        { "CHORUS",   "Rate",   "Depth",   "Feedbk",  GladeColors::green   },
-        { "DISTORT",  "Drive",  "Tone",    "---",     GladeColors::magenta },
-        { "FILTER",   "Cutoff", "Res",     "Type",    GladeColors::yellow  },
-        { "SHIMMER",  "Size",   "Damp",    "Shimmer", GladeColors::purple  },
-        { "L.CHORUS", "Rate",   "Depth",   "Feedbk",  GladeColors::green   },
+        { "NONE",     "-",      "-",       "-",       GladeColors::border    },       // 0
+        { "REVERB",   "Size",   "Damp",    "Width",   GladeColors::purple    },       // 1
+        { "DELAY",    "Time",   "Feedbk",  "Spread",  GladeColors::cyan      },       // 2
+        { "CHORUS",   "Rate",   "Depth",   "Feedbk",  GladeColors::green     },       // 3
+        { "DISTORT",  "Drive",  "Tone",    "---",     GladeColors::magenta   },       // 4
+        { "FILTER",   "Cutoff", "Res",     "Type",    GladeColors::yellow    },       // 5
+        { "SHIMMER",  "Size",   "Damp",    "Shimmer", GladeColors::purple    },       // 6 (tombstone)
+        { "L.CHORUS", "Rate",   "Depth",   "Feedbk",  GladeColors::fxTeal    },       // 7
+        { "FLANGER",  "Rate",   "Depth",   "Feedbk",  GladeColors::fxSkyBlue },       // 8
+        { "HARMONIC", "Drive",  "Freq",    "Char",    GladeColors::fxAmber   },       // 9
+        { "AUTO-PAN", "Rate",   "Depth",   "---",     GladeColors::fxCoral   },       // 10
     };
-    return table[juce::jlimit (0, 7, type)];
+    return table[juce::jlimit (0, 10, type)];
 }
 
 //==============================================================================

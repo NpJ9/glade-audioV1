@@ -111,25 +111,6 @@ private:
     juce::AudioBuffer<float> dryBuffer;
 };
 
-// SHIMMER REVERB  p1=RoomSize  p2=Damping  p3=ShimmerAmount  mix
-// Large reverb with an octave-up pitch-shift feedback loop.
-class ShimmerEffect : public IEffectProcessor
-{
-public:
-    void prepare (double sr, int maxBlock) override;
-    void process (juce::AudioBuffer<float>&, const FXSlotParams&, double bpm) override;
-    void reset() override;
-private:
-    double sampleRate = 44100.0;
-    juce::dsp::Reverb shimReverb;
-    std::vector<float> shimPitchBufL, shimPitchBufR;
-    // Dry signal save-buffer for manual wet/dry blend (decouples mix from feedback path)
-    std::vector<float> shimDryL, shimDryR;
-    int   shimPitchWrite = 0;
-    float shimReadPos0   = 0.f;
-    float shimReadPos1   = 0.f;
-};
-
 // FLANGER  p1=Rate(0-1→0.05-5Hz)  p2=Depth(0-1)  p3=Feedback(-1..1)  mix
 // Classic all-pass style flanger: one LFO-modulated short delay (1-8ms)
 // summed back with the dry signal, producing a comb-filter sweep.

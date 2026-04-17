@@ -74,8 +74,12 @@ struct GrainParams
     float glideTime = 0.f;       // seconds to slide between MIDI notes (0=off)
 
     // ── Macro knobs M1–M4 ─────────────────────────────────────────────────────
-    // Each macro outputs (value − 0.5) × 2 → −1..+1 additive modulation on its target.
+    // Each macro outputs (value − 0.5) × 2 → −1..+1 additive modulation on each target.
     // Default 0.5 = neutral (no offset). Targets use the same indices as LFO targets.
+    // Each macro supports up to 4 independent targets simultaneously.
     float m1 = 0.5f, m2 = 0.5f, m3 = 0.5f, m4 = 0.5f;
-    int   m1Target = 0, m2Target = 0, m3Target = 0, m4Target = 0;
+    int   m1Target = 0, m1Target2 = 0, m1Target3 = 0, m1Target4 = 0;
+    int   m2Target = 0, m2Target2 = 0, m2Target3 = 0, m2Target4 = 0;
+    int   m3Target = 0, m3Target2 = 0, m3Target3 = 0, m3Target4 = 0;
+    int   m4Target = 0, m4Target2 = 0, m4Target3 = 0, m4Target4 = 0;
 };

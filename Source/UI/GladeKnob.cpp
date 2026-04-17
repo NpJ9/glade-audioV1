@@ -1,5 +1,20 @@
 #include "GladeKnob.h"
 
+// Parameter-aware display formatting.
+// Keeps integer-valued params clean (no spurious ".00") and adds units where helpful.
+static juce::String formatKnobValue (const juce::String& paramId, double value)
+{
+    if (paramId == "pitchShift")
+        return juce::String ((int) value) + " st";
+    if (paramId == "grainSize")
+        return juce::String (juce::roundToInt (value)) + " ms";
+    if (paramId == "grainDensity")
+        return juce::String (juce::roundToInt (value)) + "/s";
+    if (paramId == "glideTime")
+        return juce::String (value, value < 0.1 ? 3 : 2) + " s";
+    return juce::String (value, 2);
+}
+
 //==============================================================================
 GladeKnob::GladeKnob (const juce::String& pid,
                        const juce::String& name,
@@ -15,6 +30,10 @@ GladeKnob::GladeKnob (const juce::String& pid,
 
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         apvts, pid, slider);
+
+    // Seed the cached string from the initial parameter value so it shows
+    // a real number before the first sliderValueChanged callback fires.
+    cachedValueStr = formatKnobValue (paramId, slider.getValue());
 
     // Double-click resets to parameter default
     if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (pid)))
@@ -49,8 +68,7 @@ void GladeKnob::paint (juce::Graphics& g)
     g.setFont (juce::Font (juce::FontOptions{}.withHeight (13.f)));
     auto valueArea = bounds.removeFromTop (18);
 
-    juce::String valueStr = juce::String (slider.getValue(), 2);
-    g.drawFittedText (valueStr, valueArea, juce::Justification::centred, 1);
+    g.drawFittedText (cachedValueStr, valueArea, juce::Justification::centred, 1);
 
     // Name text (bottom of label area)
     g.setColour (GladeColors::textDim);
@@ -59,7 +77,13 @@ void GladeKnob::paint (juce::Graphics& g)
                       juce::Justification::centred, 1);
 }
 
-void GladeKnob::sliderValueChanged (juce::Slider*) { repaint(); }
+void GladeKnob::sliderValueChanged (juce::Slider*)
+{
+    // Build the display string here (once per value change) rather than
+    // allocating a juce::String on every paint() call at 30 Hz.
+    cachedValueStr = formatKnobValue (paramId, slider.getValue());
+    repaint();
+}
 
 void GladeKnob::setLfoOverlay (int lfoIndex, float output, float depth, juce::Colour colour)
 {
@@ -83,6 +107,10 @@ void GladeKnob::paintOverChildren (juce::Graphics& g)
     // Slider occupies top (height - labelH) pixels
     const int    labelH = 34;
     const auto   sb     = getLocalBounds().withTrimmedBottom (labelH).toFloat();
+
+    // Clip to the component bounds so rings don't bleed outside the knob area.
+    g.saveState();
+    g.reduceClipRegion (getLocalBounds());
     const float  cx     = sb.getCentreX();
     const float  cy     = sb.getCentreY();
     const float  outerR = juce::jmin (sb.getWidth(), sb.getHeight()) * 0.5f - 3.f;
@@ -135,7 +163,7 @@ void GladeKnob::paintOverChildren (juce::Graphics& g)
         g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.f, 5.f);
     }
 
-    // ── Env follower ring (cyan) — outermost ring ─────────────────────────────
+    // ── Macro ring (magenta) — outermost ring ────────────────────────────────
     if (envModDepth > 0.001f)
     {
         const float envRingR  = outerR + kBaseOffset + 3.f * kRingStep;   // one step past LFO3
@@ -152,19 +180,21 @@ void GladeKnob::paintOverChildren (juce::Graphics& g)
             rangeArc.addCentredArc (cx, cy, envRingR, envRingR, 0.f,
                                     centerAngle - halfSpan,
                                     centerAngle + halfSpan, true);
-            g.setColour (GladeColors::cyan.withAlpha (0.22f));
+            g.setColour (GladeColors::magenta.withAlpha (0.22f));
             g.strokePath (rangeArc, juce::PathStrokeType (2.f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
 
             const float dotAngle = centerAngle + envNorm * halfSpan;
             const float dotX = cx + envRingR * std::sin (dotAngle);
             const float dotY = cy - envRingR * std::cos (dotAngle);
-            g.setColour (GladeColors::cyan.withAlpha (0.5f));
+            g.setColour (GladeColors::magenta.withAlpha (0.5f));
             g.fillEllipse (dotX - 4.f, dotY - 4.f, 8.f, 8.f);
-            g.setColour (GladeColors::cyan);
+            g.setColour (GladeColors::magenta);
             g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.f, 5.f);
         }
     }
+
+    g.restoreState();
 }
 
 //==============================================================================

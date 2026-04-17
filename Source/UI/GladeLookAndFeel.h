@@ -17,6 +17,16 @@ namespace GladeColors
     inline const juce::Colour magenta     { 0xffff2a6d };
     inline const juce::Colour purple      { 0xff9b5de5 };
     inline const juce::Colour yellow      { 0xfff5c518 };
+
+    // LFO2 / LFO3 — distinct from Pitch (green) and Output (yellow)
+    inline const juce::Colour teal        { 0xff00cba5 };
+    inline const juce::Colour orange      { 0xffff9944 };
+
+    // Named FX-slot accent colours (keeps ad-hoc hex out of FXSlotUI)
+    inline const juce::Colour fxTeal      { 0xff00e5cc };   // L.CHORUS
+    inline const juce::Colour fxSkyBlue   { 0xff4db8ff };   // FLANGER
+    inline const juce::Colour fxAmber     { 0xffffaa00 };   // HARMONIC
+    inline const juce::Colour fxCoral     { 0xffff6666 };   // AUTO-PAN
 }
 
 //==============================================================================

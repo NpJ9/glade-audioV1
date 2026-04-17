@@ -34,22 +34,18 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
       m2Knob   ("m2", "M2", magenta, p.apvts),
       m3Knob   ("m3", "M3", magenta, p.apvts),
       m4Knob   ("m4", "M4", magenta, p.apvts),
-      m1TargetCombo ("m1Target", "T", magenta, p.apvts),
-      m2TargetCombo ("m2Target", "T", magenta, p.apvts),
-      m3TargetCombo ("m3Target", "T", magenta, p.apvts),
-      m4TargetCombo ("m4Target", "T", magenta, p.apvts),
       lfo1RateKnob      ("lfoRate",     "Rate",   magenta, p.apvts),
       lfo1DepthKnob     ("lfoDepth",   "Depth",  magenta, p.apvts),
       lfo1ShapeCombo    ("lfoShape",   "Shape",  magenta, p.apvts),
       lfo1TargetCombo   ("lfoTarget",  "Target", magenta, p.apvts),
-      lfo2RateKnob      ("lfoRate2",   "Rate",   green,   p.apvts),
-      lfo2DepthKnob     ("lfoDepth2",  "Depth",  green,   p.apvts),
-      lfo2ShapeCombo    ("lfoShape2",  "Shape",  green,   p.apvts),
-      lfo2TargetCombo   ("lfoTarget2", "Target", green,   p.apvts),
-      lfo3RateKnob      ("lfoRate3",   "Rate",   yellow,  p.apvts),
-      lfo3DepthKnob     ("lfoDepth3",  "Depth",  yellow,  p.apvts),
-      lfo3ShapeCombo    ("lfoShape3",  "Shape",  yellow,  p.apvts),
-      lfo3TargetCombo   ("lfoTarget3", "Target", yellow,  p.apvts),
+      lfo2RateKnob      ("lfoRate2",   "Rate",   teal,    p.apvts),
+      lfo2DepthKnob     ("lfoDepth2",  "Depth",  teal,    p.apvts),
+      lfo2ShapeCombo    ("lfoShape2",  "Shape",  teal,    p.apvts),
+      lfo2TargetCombo   ("lfoTarget2", "Target", teal,    p.apvts),
+      lfo3RateKnob      ("lfoRate3",   "Rate",   orange,  p.apvts),
+      lfo3DepthKnob     ("lfoDepth3",  "Depth",  orange,  p.apvts),
+      lfo3ShapeCombo    ("lfoShape3",  "Shape",  orange,  p.apvts),
+      lfo3TargetCombo   ("lfoTarget3", "Target", orange,  p.apvts),
       beatDivCombo    ("beatDivision", "Div",    cyan,  p.apvts)
 {
     setLookAndFeel (&laf);
@@ -86,6 +82,11 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
         presetManager.nextPreset (audioProcessor.apvts);
         onPresetChosen (presetManager.getCurrentIndex());
     };
+
+    savePresetButton.setColour (juce::TextButton::buttonColourId,  panelRaised);
+    savePresetButton.setColour (juce::TextButton::textColourOffId, green);
+    savePresetButton.onClick = [this] { showSavePresetDialog(); };
+    addAndMakeVisible (savePresetButton);
 
     rndAllButton.setColour (juce::TextButton::buttonColourId,  panelRaised);
     rndAllButton.setColour (juce::TextButton::textColourOffId, magenta);
@@ -190,8 +191,40 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
     addAndMakeVisible (windowCombo);
     addAndMakeVisible (m1Knob);  addAndMakeVisible (m2Knob);
     addAndMakeVisible (m3Knob);  addAndMakeVisible (m4Knob);
-    addAndMakeVisible (m1TargetCombo); addAndMakeVisible (m2TargetCombo);
-    addAndMakeVisible (m3TargetCombo); addAndMakeVisible (m4TargetCombo);
+
+    // ── Macro target combos: 4 macros × 4 targets each ───────────────────────
+    // Param IDs: m1Target, m1Target2, m1Target3, m1Target4 (etc.)
+    {
+        static const char* kMacroSuffixes[4] = { "", "2", "3", "4" };
+        for (int m = 0; m < 4; ++m)
+        {
+            const auto ms = juce::String (m + 1);
+            for (int t = 0; t < 4; ++t)
+            {
+                const juce::String pid = "m" + ms + "Target" + kMacroSuffixes[t];
+                macroTargetCombos[m][t] = std::make_unique<GladeCombo> (
+                    pid, "", magenta, p.apvts);
+                addAndMakeVisible (*macroTargetCombos[m][t]);
+            }
+        }
+    }
+
+    // ── Macro selector buttons (M1–M4) — like the LFO selector ──────────────
+    {
+        static const char* kMacroLabels[4] = { "M1", "M2", "M3", "M4" };
+        for (int i = 0; i < 4; ++i)
+        {
+            macroSelBtn[i].setButtonText (kMacroLabels[i]);
+            macroSelBtn[i].setColour (juce::TextButton::buttonColourId,   panelRaised);
+            macroSelBtn[i].setColour (juce::TextButton::textColourOffId,  textDim);
+            macroSelBtn[i].setColour (juce::TextButton::buttonOnColourId, magenta.withAlpha (0.25f));
+            macroSelBtn[i].setColour (juce::TextButton::textColourOnId,   magenta);
+            macroSelBtn[i].setClickingTogglesState (false);
+            const int idx = i;
+            macroSelBtn[i].onClick = [this, idx] { activeMacro = idx; resized(); };
+            addAndMakeVisible (macroSelBtn[i]);
+        }
+    }
     addAndMakeVisible (lfoDisplay);
     addAndMakeVisible (lfo1RateKnob);  addAndMakeVisible (lfo1DepthKnob);
     addAndMakeVisible (lfo1ShapeCombo);addAndMakeVisible (lfo1TargetCombo);
@@ -228,6 +261,12 @@ GladeAudioProcessorEditor::GladeAudioProcessorEditor (GladeAudioProcessor& p)
         addAndMakeVisible (*fxSlots[i]);
     }
 
+    setResizable (true, true);
+    if (auto* c = getConstrainer())
+    {
+        c->setMinimumSize (1000, 620);
+        c->setMaximumSize (1800, 1100);
+    }
     setSize (1400, 880);
     startTimerHz (30);
 }
@@ -241,10 +280,15 @@ GladeAudioProcessorEditor::~GladeAudioProcessorEditor()
 //==============================================================================
 void GladeAudioProcessorEditor::timerCallback()
 {
-    // Free old effect instances that the audio thread retired during type swaps.
-    // Must be called from the message thread — this timer fires at 30 Hz, which
-    // is more than fast enough given that type changes are user-driven.
+    // Free old effect instances regardless of visibility — this must run even
+    // when the UI is hidden so the garbage queue never backs up.
     audioProcessor.fxChain->collectGarbage();
+
+    // Skip all UI updates when the plugin window is not visible (minimised,
+    // hidden behind another window, or the DAW UI is closed).  The audio
+    // thread continues unaffected; we just avoid 30 Hz message-thread work
+    // and unnecessary repaints while nothing is actually being shown.
+    if (!isShowing()) return;
 
     // Sync preset button text after async state restore (setStateInformation defers
     // currentPresetName update to the message thread via callAsync, so the editor
@@ -286,7 +330,7 @@ void GladeAudioProcessorEditor::timerCallback()
     static const char* lfoDepthIds[] = { "lfoDepth",  "lfoDepth2",  "lfoDepth3"  };
     static const char* lfoShapeIds[] = { "lfoShape",  "lfoShape2",  "lfoShape3"  };
     static const juce::Colour lfoColours[3] = {
-        GladeColors::magenta, GladeColors::green, GladeColors::yellow };
+        GladeColors::magenta, GladeColors::teal, GladeColors::orange };
 
     const float lfoDepth = getF (lfoDepthIds[activeLfo]);
     const int   lfoShape = (int) getF (lfoShapeIds[activeLfo]);
@@ -316,7 +360,7 @@ void GladeAudioProcessorEditor::timerCallback()
     // Per-LFO coloured rings: each LFO drives its own ring at its own colour.
     // Rings are only shown on the knob that the LFO is targeting.
     static const juce::Colour kLfoRingColours[3] = {
-        GladeColors::magenta, GladeColors::green, GladeColors::yellow };
+        GladeColors::magenta, GladeColors::teal, GladeColors::orange };
     const int   lfoTgts[3]  = { lfoTgt1, lfoTgt2, lfoTgt3 };
     const float lfoDeps[3]  = { lfoDep1, lfoDep2, lfoDep3 };
 
@@ -333,8 +377,38 @@ void GladeAudioProcessorEditor::timerCallback()
                 kLfoRingColours[li]);
         }
 
-        modKnobs[i]->setEnvOverlay (0.f, 0.f);
+        modKnobs[i]->setEnvOverlay (0.f, 0.f);   // cleared below if a macro targets this knob
         modKnobs[i]->repaint();
+    }
+
+    // ── Macro rings — show modulation ring on every knob each macro is targeting ─
+    {
+        static const char* macroIds[]  = { "m1", "m2", "m3", "m4" };
+        // All 4 target param IDs per macro, in order
+        static const char* macroTgtIds[4][4] =
+        {
+            { "m1Target", "m1Target2", "m1Target3", "m1Target4" },
+            { "m2Target", "m2Target2", "m2Target3", "m2Target4" },
+            { "m3Target", "m3Target2", "m3Target3", "m3Target4" },
+            { "m4Target", "m4Target2", "m4Target3", "m4Target4" },
+        };
+
+        // Reset all macro rings first so that de-assigned targets clear.
+        for (int i = 1; i < 6; ++i)
+            if (modKnobs[i] != nullptr)
+                modKnobs[i]->setEnvOverlay (0.f, 0.f);
+
+        // Apply macro rings — last macro targeting a knob wins.
+        for (int m = 0; m < 4; ++m)
+        {
+            const float macroVal = getF (macroIds[m]);
+            for (int t = 0; t < 4; ++t)
+            {
+                const int tgt = (int) getF (macroTgtIds[m][t]);
+                if (tgt > 0 && tgt < 6 && modKnobs[tgt] != nullptr)
+                    modKnobs[tgt]->setEnvOverlay (macroVal, 0.7f);
+            }
+        }
     }
 
     // ── Step sequencer UI sync ────────────────────────────────────────────────
@@ -459,6 +533,8 @@ void GladeAudioProcessorEditor::resized()
         logoLabel.setBounds        (h.removeFromLeft (85));
         wildButton.setBounds       (h.removeFromRight (75));
         rndAllButton.setBounds     (h.removeFromRight (101));
+        h.removeFromRight (8);
+        savePresetButton.setBounds (h.removeFromRight (60));
         h.removeFromRight (11);
         nextPresetButton.setBounds (h.removeFromRight (37));
         prevPresetButton.setBounds (h.removeFromRight (37));
@@ -466,11 +542,11 @@ void GladeAudioProcessorEditor::resized()
         presetMenuButton.setBounds (h);
     }
 
-    // ── FX chain (233px) ─────────────────────────────────────────────────────
-    bottomArea = bounds.removeFromBottom (233);
+    // ── FX chain (200px) ─────────────────────────────────────────────────────
+    bottomArea = bounds.removeFromBottom (200);
 
-    // ── WINDOW + LFO + MACRO row (128px) ─────────────────────────────────────
-    auto windowLfoRow = bounds.removeFromBottom (128);
+    // ── WINDOW + LFO + MACRO row (183px) ─────────────────────────────────────
+    auto windowLfoRow = bounds.removeFromBottom (183);
     windowArea = windowLfoRow.removeFromLeft (333);
     macroArea  = windowLfoRow.removeFromRight (660);
     lfoArea    = windowLfoRow;
@@ -506,7 +582,7 @@ void GladeAudioProcessorEditor::resized()
     // ── GRAIN section ─────────────────────────────────────────────────────────
     {
         auto ga = grainArea.reduced (11, 11);
-        grainRndButton.setBounds (ga.getRight() - 48, ga.getY() + 3, 44, 21);
+        grainRndButton.setBounds (ga.getRight() - 48, ga.getY() + 3, 44, 26);
 
         auto syncRow = ga.removeFromBottom (53);
         syncRow.removeFromTop (5);
@@ -528,14 +604,17 @@ void GladeAudioProcessorEditor::resized()
     // ── PITCH section ────────────────────────────────────────────────────────
     {
         auto pa = pitchArea.reduced (11, 11);
-        pitchRndButton.setBounds (pa.getRight() - 53, pa.getY() + 3, 48, 21);
+        pitchRndButton.setBounds (pa.getRight() - 53, pa.getY() + 3, 48, 26);
         layoutKnobRow (pa.withTrimmedTop (32),
                        { &pitchShiftKnob, &pitchJitterKnob, &panSpreadKnob, &glideKnob });
     }
 
     // ── OUTPUT section ────────────────────────────────────────────────────────
-    layoutKnobRow (outputArea.reduced (11, 43),
-                   { &outputGainKnob, &dryWetKnob, &velocityKnob });
+    {
+        auto oa = outputArea.reduced (11, 11);
+        layoutKnobRow (oa.withTrimmedTop (32),
+                       { &outputGainKnob, &dryWetKnob, &velocityKnob });
+    }
 
     // ── WINDOW section ────────────────────────────────────────────────────────
     {
@@ -548,21 +627,46 @@ void GladeAudioProcessorEditor::resized()
         auto ma = macroArea.reduced (10, 0);
         ma.removeFromTop (22);  // section title
 
-        // 4 columns, each with a knob (top) and a target combo (bottom 34px)
-        const int   cols   = 4;
-        const int   colW   = ma.getWidth() / cols;
-        const int   comboH = 34;
-        const int   knobH  = ma.getHeight() - comboH - 4;
-
-        GladeKnob*  macroKnobs[]  = { &m1Knob,        &m2Knob,        &m3Knob,        &m4Knob        };
-        GladeCombo* macroCombos[] = { &m1TargetCombo, &m2TargetCombo, &m3TargetCombo, &m4TargetCombo };
-
-        for (int i = 0; i < cols; ++i)
+        // Row 1: M1/M2/M3/M4 selector buttons (20px)
         {
-            auto col = ma.removeFromLeft (colW).reduced (4, 0);
-            macroKnobs[i]->setBounds  (col.removeFromTop (knobH));
-            col.removeFromTop (4);
-            macroCombos[i]->setBounds (col.removeFromTop (comboH));
+            auto selRow = ma.removeFromTop (20);
+            const int btnW = selRow.getWidth() / 4;
+            for (int i = 0; i < 4; ++i)
+            {
+                macroSelBtn[i].setBounds (selRow.removeFromLeft (btnW).reduced (2, 1));
+                const bool active = (i == activeMacro);
+                macroSelBtn[i].setColour (juce::TextButton::buttonColourId,
+                    active ? magenta.withAlpha (0.22f) : panelRaised);
+                macroSelBtn[i].setColour (juce::TextButton::textColourOffId,
+                    active ? magenta : textDim);
+            }
+        }
+        ma.removeFromTop (2);  // small gap
+
+        // Row 2: 4 macro knobs (fills remaining height minus combo row)
+        const int comboH = 28;
+        const int knobH  = ma.getHeight() - comboH - 2;
+        {
+            GladeKnob* macroKnobs[] = { &m1Knob, &m2Knob, &m3Knob, &m4Knob };
+            const int  colW = ma.getWidth() / 4;
+            for (int i = 0; i < 4; ++i)
+                macroKnobs[i]->setBounds (ma.getX() + i * colW, ma.getY(), colW, knobH);
+        }
+        ma.removeFromTop (knobH + 2);
+
+        // Row 3: 4 target combos for the ACTIVE macro
+        // Show only the active macro's combos; hide all others.
+        {
+            const int colW = ma.getWidth() / 4;
+            for (int m = 0; m < 4; ++m)
+                for (int t = 0; t < 4; ++t)
+                {
+                    const bool show = (m == activeMacro);
+                    macroTargetCombos[m][t]->setVisible (show);
+                    if (show)
+                        macroTargetCombos[m][t]->setBounds (
+                            ma.getX() + t * colW, ma.getY(), colW, comboH);
+                }
         }
     }
 
@@ -572,7 +676,7 @@ void GladeAudioProcessorEditor::resized()
         la.removeFromTop (22);   // section title space
 
         // LFO selector buttons [1][2][3] stacked vertically, then display, then knobs
-        static const juce::Colour lfoColours[3] = { magenta, green, yellow };
+        static const juce::Colour lfoColours[3] = { magenta, teal, orange };
 
         auto selCol = la.removeFromLeft (22);
         const int btnH = selCol.getHeight() / 3;
@@ -663,7 +767,7 @@ void GladeAudioProcessorEditor::paint (juce::Graphics& g)
     paintSection (g, outputArea,  "OUTPUT",      yellow);
     paintSection (g, windowArea,  "WINDOW",  cyan);
     paintSection (g, macroArea,   "MACRO",   magenta);
-    paintSection (g, lfoArea,     "LFO", magenta);
+    paintSection (g, lfoArea,     "LFO", purple);
 
     // FX chain area
     g.setColour (panel);
@@ -705,15 +809,17 @@ void GladeAudioProcessorEditor::paintSection (juce::Graphics& g,
     g.setColour (border);
     g.drawRoundedRectangle (bounds.toFloat().reduced (4.5f), 5.f, 1.f);
 
+    // Left-edge accent bar
+    g.setColour (accent.withAlpha (0.6f));
+    g.fillRoundedRectangle ((float) bounds.getX() + 5.f,
+                             (float) bounds.getY() + 8.f,
+                             2.f, 14.f, 1.f);
+
     g.setColour (accent);
     g.setFont (juce::Font (juce::FontOptions{}.withHeight (11.f).withStyle ("Bold")));
-    g.drawText (title, bounds.reduced (12, 0).removeFromTop (26),
+    g.drawText (title,
+                bounds.withTrimmedLeft (14).withTrimmedRight (12).removeFromTop (26),
                 juce::Justification::centredLeft);
-
-    g.setColour (accent.withAlpha (0.4f));
-    g.fillRect (juce::Rectangle<float> ((float) bounds.getX() + 12.f,
-                                         (float) bounds.getY() + 19.f,
-                                         28.f, 1.5f));
 }
 
 //==============================================================================
@@ -786,6 +892,30 @@ void GladeAudioProcessorEditor::swapFxSlots (int a, int b)
 
     for (const char* name : { "fxType", "fxBypass", "fxP1", "fxP2", "fxP3", "fxMix" })
         swapParam (name);
+}
+
+//==============================================================================
+void GladeAudioProcessorEditor::showSavePresetDialog()
+{
+    auto* w = new juce::AlertWindow ("Save Preset",
+                                      "Enter a name for this preset:",
+                                      juce::AlertWindow::NoIcon);
+    w->addTextEditor ("presetName", presetManager.getCurrentName());
+    w->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    w->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, w] (int result)
+        {
+            const juce::String name = w->getTextEditorContents ("presetName").trim();
+            delete w;
+            if (result == 1 && name.isNotEmpty())
+            {
+                presetManager.saveUserPreset (name, audioProcessor.apvts);
+                onPresetChosen (presetManager.getCurrentIndex());
+            }
+        }),
+        false);
 }
 
 //==============================================================================

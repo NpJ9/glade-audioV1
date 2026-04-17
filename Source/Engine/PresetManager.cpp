@@ -348,14 +348,14 @@ PresetManager::PresetManager()
     }));
 
     presets.push_back (makePreset ("MONOLITH", "Atmospheric",
-    {   // VOID + octave-up shimmer — dark foundation, bright overtone halo
+    {   // Massive sub-octave pad with deep reverb
         {"grainSize",420.f},{"grainDensity",5.f},{"grainPosition",0.48f},{"posJitter",0.05f},
         {"pitchShift",-12.f},{"pitchJitter",0.01f},{"panSpread",0.5f},
         {"attack",3.f},{"decay",1.5f},{"sustain",1.f},{"release",7.f},
         {"outputGain",-4.f},{"dryWet",1.f},
         {"lfoRate",0.05f},{"lfoDepth",0.07f},{"lfoTarget",3.f},
         {"pitchScale",4.f},{"pitchRoot",0.f},
-        {"fxType0",6.f},{"fxP10",0.96f},{"fxP20",0.55f},{"fxP30",0.45f},{"fxMix0",0.85f},
+        {"fxType0",1.f},{"fxP10",0.98f},{"fxP20",0.6f},{"fxP30",0.95f},{"fxMix0",0.88f},
     }));
 
     presets.push_back (makePreset ("AMBER", "Atmospheric",
@@ -394,6 +394,9 @@ PresetManager::PresetManager()
         {"fxType0",10.f},{"fxP10",0.3f},{"fxP20",0.75f},{"fxP30",0.5f},{"fxMix0",0.8f},
         {"fxType1",2.f},{"fxP11",0.4f},{"fxP21",0.5f},{"fxP31",0.f},{"fxMix1",0.4f},
     }));
+
+    // Load any user-saved presets from disk (appended after factory presets)
+    loadUserPresets();
 }
 
 //==============================================================================
@@ -412,9 +415,21 @@ void PresetManager::applyPreset (const Preset& p,
         { "m1", 0.5f }, { "m2", 0.5f }, { "m3", 0.5f }, { "m4", 0.5f },
         { "m1Target", 0.f }, { "m2Target", 0.f },
         { "m3Target", 0.f }, { "m4Target", 0.f },
+        // Macro extra targets (4 targets per macro)
+        { "m1Target2", 0.f }, { "m1Target3", 0.f }, { "m1Target4", 0.f },
+        { "m2Target2", 0.f }, { "m2Target3", 0.f }, { "m2Target4", 0.f },
+        { "m3Target2", 0.f }, { "m3Target3", 0.f }, { "m3Target4", 0.f },
+        { "m4Target2", 0.f }, { "m4Target3", 0.f }, { "m4Target4", 0.f },
         // LFO 2 & 3 back to silent
         { "lfoDepth2", 0.f }, { "lfoTarget2", 0.f },
         { "lfoDepth3", 0.f }, { "lfoTarget3", 0.f },
+        // FX slots back to None so changing presets clears leftover effects
+        { "fxType0", 0.f }, { "fxType1", 0.f }, { "fxType2", 0.f }, { "fxType3", 0.f },
+        { "fxBypass0", 0.f }, { "fxBypass1", 0.f }, { "fxBypass2", 0.f }, { "fxBypass3", 0.f },
+        { "fxMix0",  1.f  }, { "fxMix1",  1.f  }, { "fxMix2",  1.f  }, { "fxMix3",  1.f  },
+        { "fxP10",  0.5f  }, { "fxP11",  0.5f  }, { "fxP12",  0.5f  }, { "fxP13",  0.5f  },
+        { "fxP20",  0.5f  }, { "fxP21",  0.5f  }, { "fxP22",  0.5f  }, { "fxP23",  0.5f  },
+        { "fxP30",  0.5f  }, { "fxP31",  0.5f  }, { "fxP32",  0.5f  }, { "fxP33",  0.5f  },
     };
     for (auto& r : resets)
     {
@@ -465,4 +480,164 @@ void PresetManager::setCurrentByName (const juce::String& name)
             return;
         }
     }
+}
+
+//==============================================================================
+// User preset file paths + serialisation
+//==============================================================================
+
+juce::File PresetManager::getUserPresetsDir()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("GladeV2/Presets");
+}
+
+void PresetManager::writePresetFile (const Preset& p)
+{
+    const auto dir = getUserPresetsDir();
+    dir.createDirectory();
+
+    juce::XmlElement root ("GladePreset");
+    root.setAttribute ("name",     p.name);
+    root.setAttribute ("category", p.category);
+
+    for (const auto& [id, val] : p.params)
+    {
+        auto* child = root.createNewChildElement ("Param");
+        child->setAttribute ("id",    id);
+        child->setAttribute ("value", (double) val);
+    }
+
+    // Sanitise the file name: replace characters that are illegal on Windows/macOS
+    juce::String safeName = p.name;
+    for (auto ch : juce::String ("\\/:*?\"<>|"))
+        safeName = safeName.replace (juce::String::charToString (ch), "_");
+
+    root.writeTo (dir.getChildFile (safeName + ".glade"),
+                  juce::XmlElement::TextFormat());
+}
+
+void PresetManager::loadUserPresets()
+{
+    const auto dir = getUserPresetsDir();
+    if (!dir.isDirectory()) return;
+
+    for (const auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.glade"))
+    {
+        if (auto xml = juce::XmlDocument::parse (f))
+        {
+            if (!xml->hasTagName ("GladePreset")) continue;
+
+            Preset p;
+            p.name        = xml->getStringAttribute ("name");
+            p.category    = xml->getStringAttribute ("category", "User");
+            p.isUserPreset = true;
+
+            if (p.name.isEmpty()) continue;
+
+            for (auto* child = xml->getFirstChildElement();
+                 child != nullptr;
+                 child = child->getNextElement())
+            {
+                if (!child->hasTagName ("Param")) continue;
+                const auto  id  = child->getStringAttribute ("id");
+                const float val = (float) child->getDoubleAttribute ("value");
+                if (id.isNotEmpty())
+                    p.params[id] = val;
+            }
+
+            // Skip duplicates (e.g. loaded twice during hot-reload)
+            bool already = false;
+            for (const auto& existing : presets)
+                if (existing.name == p.name && existing.isUserPreset)
+                    { already = true; break; }
+
+            if (!already)
+                presets.push_back (std::move (p));
+        }
+    }
+}
+
+//==============================================================================
+// All parameter IDs that we capture when saving a user preset.
+// Update this list whenever new parameters are added to createParameterLayout().
+static const char* kPresetParamIds[] =
+{
+    "grainSize","grainDensity","grainPosition","posJitter",
+    "pitchShift","pitchJitter","panSpread","windowType",
+    "pitchScale","pitchRoot",
+    "attack","decay","sustain","release",
+    "outputGain","dryWet",
+    "lfoRate","lfoDepth","lfoShape","lfoTarget",
+    "lfoRate2","lfoDepth2","lfoShape2","lfoTarget2",
+    "lfoRate3","lfoDepth3","lfoShape3","lfoTarget3",
+    "beatSync","beatDivision",
+    "reverseAmount","freeze","velocityDepth","glideTime",
+    "m1","m2","m3","m4",
+    "m1Target","m1Target2","m1Target3","m1Target4",
+    "m2Target","m2Target2","m2Target3","m2Target4",
+    "m3Target","m3Target2","m3Target3","m3Target4",
+    "m4Target","m4Target2","m4Target3","m4Target4",
+    "fxType0","fxType1","fxType2","fxType3",
+    "fxBypass0","fxBypass1","fxBypass2","fxBypass3",
+    "fxP10","fxP11","fxP12","fxP13",
+    "fxP20","fxP21","fxP22","fxP23",
+    "fxP30","fxP31","fxP32","fxP33",
+    "fxMix0","fxMix1","fxMix2","fxMix3",
+};
+
+bool PresetManager::saveUserPreset (const juce::String& name,
+                                     juce::AudioProcessorValueTreeState& apvts)
+{
+    Preset p;
+    p.name        = name.trim();
+    p.category    = "User";
+    p.isUserPreset = true;
+
+    if (p.name.isEmpty()) return false;
+
+    // Capture current parameter values
+    for (const auto* id : kPresetParamIds)
+    {
+        if (auto* raw = apvts.getRawParameterValue (id))
+            p.params[id] = raw->load();
+    }
+
+    // Replace existing user preset with the same name, otherwise append
+    bool replaced = false;
+    for (int i = 0; i < (int) presets.size(); ++i)
+    {
+        if (presets[i].isUserPreset && presets[i].name == p.name)
+        {
+            presets[i] = p;
+            currentIndex = i;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+    {
+        presets.push_back (p);
+        currentIndex = (int) presets.size() - 1;
+    }
+
+    writePresetFile (p);
+    return true;
+}
+
+bool PresetManager::deleteUserPreset (int index)
+{
+    if (index < 0 || index >= (int) presets.size()) return false;
+    if (!presets[index].isUserPreset) return false;
+
+    // Delete the file
+    const auto dir = getUserPresetsDir();
+    juce::String safeName = presets[index].name;
+    for (auto ch : juce::String ("\\/:*?\"<>|"))
+        safeName = safeName.replace (juce::String::charToString (ch), "_");
+    dir.getChildFile (safeName + ".glade").deleteFile();
+
+    presets.erase (presets.begin() + index);
+    currentIndex = juce::jlimit (0, (int) presets.size() - 1, currentIndex);
+    return true;
 }

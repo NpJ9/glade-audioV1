@@ -83,8 +83,11 @@ void GranularEngine::handleMidi (juce::MidiBuffer& midi)
             {
                 currentMidiNote.store (-1);
                 adsr.noteOff();
-                if (!adsrVizNoteOn)   // don't overwrite a simultaneous noteOn flag
-                    adsrVizNoteOff = true;
+                // Always set the noteOff flag so the visualiser transitions to
+                // Release even when noteOn and noteOff both arrive in the same
+                // block (e.g. very short notes < 3ms).  If adsrVizNoteOn is also
+                // set, process() will handle Attack this block and Release next block.
+                adsrVizNoteOff = true;
             }
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff())
@@ -92,8 +95,7 @@ void GranularEngine::handleMidi (juce::MidiBuffer& midi)
             noteStackSize = 0;
             currentMidiNote.store (-1);
             adsr.noteOff();
-            if (!adsrVizNoteOn)
-                adsrVizNoteOff = true;
+            adsrVizNoteOff = true;
         }
     }
 }
@@ -155,7 +157,10 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
             adsrVizStage   = AdsrVizStage::Attack;
             adsrVizTimeSec = 0.0;
             adsrVizNoteOn  = false;
-            adsrVizNoteOff = false;
+            // Intentionally do NOT clear adsrVizNoteOff here.
+            // If noteOn and noteOff both fired this block (short note < block size),
+            // the Release flag is preserved and will be picked up at the top of the
+            // next process() call, giving Attack → Release in the visualiser.
         }
         else if (adsrVizNoteOff)
         {
@@ -180,12 +185,16 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
                     cursor = 0.25f * (float) (adsrVizTimeSec / juce::jmax (0.001, (double) p.attack));
                 break;
             case AdsrVizStage::Decay:
+            {
+                // JUCE ADSR reaches sustain at decay*(1-sustain) seconds, not full decay seconds.
+                const double effectiveDecayTime = juce::jmax (0.001, (double) p.decay * (1.0 - (double) p.sustain));
                 adsrVizTimeSec += blockSec;
-                if (adsrVizTimeSec >= (double) p.decay)
+                if (adsrVizTimeSec >= effectiveDecayTime)
                     { adsrVizStage = AdsrVizStage::Sustain; adsrVizTimeSec = 0.0; cursor = 0.5f; }
                 else
-                    cursor = 0.25f + 0.25f * (float) (adsrVizTimeSec / juce::jmax (0.001, (double) p.decay));
+                    cursor = 0.25f + 0.25f * (float) (adsrVizTimeSec / effectiveDecayTime);
                 break;
+            }
             case AdsrVizStage::Sustain:
                 cursor = 0.5f;
                 break;
@@ -243,10 +252,30 @@ void GranularEngine::process (juce::AudioBuffer<float>& output,
     // ── Macro knobs M1–M4: additive modulation on their assigned targets ───────
     // Each macro value 0–1 maps to output −1..+1, identical scale to LFO output.
     // Default knob value 0.5 → output 0 (no effect).
-    applyLFO (p.m1Target, (p.m1 - 0.5f) * 2.f);
-    applyLFO (p.m2Target, (p.m2 - 0.5f) * 2.f);
-    applyLFO (p.m3Target, (p.m3 - 0.5f) * 2.f);
-    applyLFO (p.m4Target, (p.m4 - 0.5f) * 2.f);
+    // Each macro can target up to 4 parameters simultaneously.
+    const float macroOut1 = (p.m1 - 0.5f) * 2.f;
+    applyLFO (p.m1Target,  macroOut1);
+    applyLFO (p.m1Target2, macroOut1);
+    applyLFO (p.m1Target3, macroOut1);
+    applyLFO (p.m1Target4, macroOut1);
+
+    const float macroOut2 = (p.m2 - 0.5f) * 2.f;
+    applyLFO (p.m2Target,  macroOut2);
+    applyLFO (p.m2Target2, macroOut2);
+    applyLFO (p.m2Target3, macroOut2);
+    applyLFO (p.m2Target4, macroOut2);
+
+    const float macroOut3 = (p.m3 - 0.5f) * 2.f;
+    applyLFO (p.m3Target,  macroOut3);
+    applyLFO (p.m3Target2, macroOut3);
+    applyLFO (p.m3Target3, macroOut3);
+    applyLFO (p.m3Target4, macroOut3);
+
+    const float macroOut4 = (p.m4 - 0.5f) * 2.f;
+    applyLFO (p.m4Target,  macroOut4);
+    applyLFO (p.m4Target2, macroOut4);
+    applyLFO (p.m4Target3, macroOut4);
+    applyLFO (p.m4Target4, macroOut4);
 
     // ── Grain freeze: lock position when active ───────────────────────────────
     // On the rising edge (off → on), snapshot the current modulated position.

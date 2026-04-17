@@ -52,7 +52,9 @@ private:
     juce::TextButton nextPresetButton { ">" };
 
     void showPresetMenu();
+    void showSavePresetDialog();
     void onPresetChosen (int index);
+    juce::TextButton savePresetButton { "SAVE" };
     juce::TextButton rndAllButton     { "RND ALL" };
     juce::ToggleButton wildButton     { "WILD" };
 
@@ -91,7 +93,11 @@ private:
     // WINDOW section + MACRO knobs
     GladeCombo windowCombo;
     GladeKnob  m1Knob, m2Knob, m3Knob, m4Knob;
-    GladeCombo m1TargetCombo, m2TargetCombo, m3TargetCombo, m4TargetCombo;
+
+    // 4 macros × 4 targets each; created in constructor body
+    std::unique_ptr<GladeCombo> macroTargetCombos[4][4];
+    juce::TextButton            macroSelBtn[4];
+    int                         activeMacro = 0;
 
     // LFO section — 3 independent LFOs, selector switches which set is visible
     GladeKnob  lfo1RateKnob, lfo1DepthKnob;
